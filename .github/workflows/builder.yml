@@ -36,7 +36,7 @@ jobs:
         # Copy main source file
         cp bara.cpp ${{ env.PROJECT_NAME }}/src/main.cpp
         
-        # Create platformio.ini with SPECIFIC library versions
+        # Create platformio.ini with WORKING library versions
         cat > ${{ env.PROJECT_NAME }}/platformio.ini << 'EOF'
         [env:esp32dev]
         platform = espressif32
@@ -51,8 +51,8 @@ jobs:
         
         lib_deps = 
             bblanchon/ArduinoJson@6.21.3
-            me-no-dev/ESPAsyncWebServer@1.2.7
-            tzapu/WiFiManager@2.0.16
+            ESPAsyncWebServer
+            WiFiManager
         
         upload_port = /dev/ttyUSB0
         EOF
