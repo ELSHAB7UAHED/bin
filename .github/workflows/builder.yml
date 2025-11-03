@@ -32,12 +32,11 @@ jobs:
       run: |
         # Create project directory structure
         mkdir -p ${{ env.PROJECT_NAME }}/src
-        mkdir -p ${{ env.PROJECT_NAME }}/lib
         
         # Copy main source file
         cp bara.cpp ${{ env.PROJECT_NAME }}/src/main.cpp
         
-        # Create platformio.ini configuration with FIXED libraries
+        # Create platformio.ini configuration with WORKING libraries
         cat > ${{ env.PROJECT_NAME }}/platformio.ini << 'EOF'
         [env:esp32dev]
         platform = espressif32
@@ -53,9 +52,7 @@ jobs:
         lib_deps = 
             bblanchon/ArduinoJson
             me-no-dev/ESPAsyncWebServer
-            me-no-dev/AsyncTCP
             tzapu/WiFiManager
-            marvinroger/async-ticker
         
         upload_port = /dev/ttyUSB0
         EOF
