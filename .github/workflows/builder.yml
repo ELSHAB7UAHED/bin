@@ -53,8 +53,6 @@ jobs:
         
         lib_deps = 
             bblanchon/ArduinoJson @ ^6.21.3
-            links2004/WebServer @ ^1.0.0
-            me-no-dev/ESP Async WebServer @ ^1.2.3
             me-no-dev/AsyncTCP @ ^1.1.1
             me-no-dev/SPIFFS @ ^1.0
             tzapu/WiFiManager @ ^2.0.16
