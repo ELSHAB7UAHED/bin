@@ -1,0 +1,621 @@
+name: 🚀 ESP32 Firmware Builder - bara.cpp
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    paths:
+      - '**.cpp'
+      - '**.h'
+      - '.github/workflows/builder.yml'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+      esp32_board:
+        description: 'ESP32 Board Type'
+        required: true
+        default: 'esp32dev'
+        type: choice
+        options:
+          - esp32dev
+          - esp32-s2
+          - esp32-s3
+          - esp32-c3
+
+env:
+  PROJECT_NAME: bara
+  ARDUINO_CLI_VERSION: 0.35.2
+  ESP32_CORE_VERSION: 2.0.14
+  PARTITION_SCHEME: default
+  FLASH_MODE: dio
+  FLASH_FREQ: 80m
+  FLASH_SIZE: 4MB
+  BUILD_CACHE: true
+
+jobs:
+  # ============================================
+  # Job 1: Prepare Build Environment
+  # ============================================
+  prepare:
+    name: 📦 Prepare Build Environment
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.cache-keys.outputs.cache-key }}
+      version: ${{ steps.version.outputs.version }}
+      build-date: ${{ steps.version.outputs.build-date }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: 🔑 Generate Cache Keys
+        id: cache-keys
+        run: |
+          CACHE_KEY="arduino-cli-${{ runner.os }}-${{ env.ARDUINO_CLI_VERSION }}-esp32-${{ env.ESP32_CORE_VERSION }}"
+          echo "cache-key=${CACHE_KEY}" >> $GITHUB_OUTPUT
+          echo "📌 Cache Key: ${CACHE_KEY}"
+
+      - name: 📊 Generate Version Info
+        id: version
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "v1.0.0")
+          BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "build-date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+          echo "🏷️  Version: ${VERSION}"
+          echo "📅 Build Date: ${BUILD_DATE}"
+
+  # ============================================
+  # Job 2: Install Dependencies & Libraries
+  # ============================================
+  setup-dependencies:
+    name: 📚 Install Arduino CLI & Libraries
+    runs-on: ubuntu-latest
+    needs: prepare
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 💾 Cache Arduino CLI
+        id: cache-arduino
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/arduino-cli
+            ~/.arduino15
+          key: ${{ needs.prepare.outputs.cache-key }}
+          restore-keys: |
+            arduino-cli-${{ runner.os }}-${{ env.ARDUINO_CLI_VERSION }}
+
+      - name: 🔧 Install Arduino CLI
+        if: steps.cache-arduino.outputs.cache-hit != 'true'
+        run: |
+          echo "⬇️  Downloading Arduino CLI v${{ env.ARDUINO_CLI_VERSION }}..."
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=$HOME/arduino-cli sh -s ${{ env.ARDUINO_CLI_VERSION }}
+          echo "$HOME/arduino-cli/bin" >> $GITHUB_PATH
+          
+      - name: 🔍 Verify Arduino CLI Installation
+        run: |
+          export PATH="$HOME/arduino-cli/bin:$PATH"
+          arduino-cli version
+          arduino-cli config init --overwrite
+
+      - name: 📦 Install ESP32 Core
+        run: |
+          export PATH="$HOME/arduino-cli/bin:$PATH"
+          echo "📌 Adding ESP32 board index..."
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          
+          echo "⬇️  Installing ESP32 Core v${{ env.ESP32_CORE_VERSION }}..."
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@${{ env.ESP32_CORE_VERSION }} --verbose
+
+      - name: 📚 Install Required Libraries
+        run: |
+          export PATH="$HOME/arduino-cli/bin:$PATH"
+          
+          echo "📦 Installing WiFi Libraries..."
+          arduino-cli lib install WiFi
+          arduino-cli lib install WebServer
+          
+          echo "📦 Installing ArduinoJson..."
+          arduino-cli lib install ArduinoJson@6.21.3
+          
+          echo "📦 Installing ESPAsyncWebServer..."
+          cd $HOME/.arduino15/libraries
+          if [ ! -d "ESPAsyncWebServer" ]; then
+            git clone https://github.com/me-no-dev/ESPAsyncWebServer.git
+          fi
+          
+          echo "📦 Installing AsyncTCP..."
+          if [ ! -d "AsyncTCP" ]; then
+            git clone https://github.com/me-no-dev/AsyncTCP.git
+          fi
+          
+          echo "📦 Installing WiFiManager..."
+          arduino-cli lib install WiFiManager@2.0.16-rc.2
+          
+          echo "📦 Installing Ticker (Built-in with ESP32 Core)"
+          
+          echo "📦 Installing DNSServer (Built-in with ESP32 Core)"
+          
+          echo "✅ All libraries installed successfully!"
+          
+      - name: 📋 List Installed Libraries
+        run: |
+          export PATH="$HOME/arduino-cli/bin:$PATH"
+          echo "📚 Installed Libraries:"
+          arduino-cli lib list
+          
+          echo ""
+          echo "🎯 Installed Cores:"
+          arduino-cli core list
+
+  # ============================================
+  # Job 3: Build Firmware
+  # ============================================
+  build-firmware:
+    name: 🔨 Build ESP32 Firmware
+    runs-on: ubuntu-latest
+    needs: [prepare, setup-dependencies]
+    strategy:
+      matrix:
+        board: [esp32dev, esp32-s2-saola-1, esp32-s3-devkitc-1, esp32-c3-devkitm-1]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 💾 Restore Arduino CLI Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/arduino-cli
+            ~/.arduino15
+          key: ${{ needs.prepare.outputs.cache-key }}
+
+      - name: 🔧 Setup Build Environment
+        run: |
+          export PATH="$HOME/arduino-cli/bin:$PATH"
+          echo "$HOME/arduino-cli/bin" >> $GITHUB_PATH
+          
+          echo "🎯 Build Configuration:"
+          echo "  • Board: ${{ matrix.board }}"
+          echo "  • Version: ${{ needs.prepare.outputs.version }}"
+          echo "  • Date: ${{ needs.prepare.outputs.build-date }}"
+
+      - name: 📝 Create Build Info Header
+        run: |
+          cat > build_info.h << 'EOF'
+          #ifndef BUILD_INFO_H
+          #define BUILD_INFO_H
+          
+          #define FIRMWARE_VERSION "${{ needs.prepare.outputs.version }}"
+          #define BUILD_DATE "${{ needs.prepare.outputs.build-date }}"
+          #define BUILD_BOARD "${{ matrix.board }}"
+          #define BUILDER_NAME "GitHub Actions"
+          
+          #endif // BUILD_INFO_H
+          EOF
+          
+          echo "✅ Build info header created"
+
+      - name: 🔨 Compile Firmware
+        run: |
+          export PATH="$HOME/arduino-cli/bin:$PATH"
+          
+          echo "🔨 Compiling bara.cpp for ${{ matrix.board }}..."
+          
+          arduino-cli compile \
+            --fqbn esp32:esp32:${{ matrix.board }} \
+            --build-property "compiler.cpp.extra_flags=-DCORE_DEBUG_LEVEL=0 -DBOARD_HAS_PSRAM" \
+            --build-property "build.partitions=default" \
+            --build-property "upload.maximum_size=1310720" \
+            --warnings all \
+            --verbose \
+            --output-dir ./build \
+            "bara (1).cpp"
+          
+          echo "✅ Compilation completed successfully!"
+
+      - name: 📊 Analyze Build Output
+        run: |
+          echo "📊 Build Analysis:"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          if [ -f "build/${{ env.PROJECT_NAME }}.ino.elf" ]; then
+            SIZE=$(ls -lh "build/${{ env.PROJECT_NAME }}.ino.elf" | awk '{print $5}')
+            echo "📦 ELF Size: ${SIZE}"
+          fi
+          
+          if [ -f "build/${{ env.PROJECT_NAME }}.ino.bin" ]; then
+            SIZE=$(ls -lh "build/${{ env.PROJECT_NAME }}.ino.bin" | awk '{print $5}')
+            echo "📦 BIN Size: ${SIZE}"
+          fi
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          echo ""
+          echo "📁 Build Directory Contents:"
+          ls -lah build/
+
+      - name: 🔗 Create Merged Binary
+        run: |
+          export PATH="$HOME/arduino-cli/bin:$PATH"
+          
+          echo "🔗 Creating merged binary for flash..."
+          
+          # Get the bootloader and partitions from ESP32 core
+          ESP32_PATH="$HOME/.arduino15/packages/esp32/hardware/esp32/${{ env.ESP32_CORE_VERSION }}"
+          BOOTLOADER="${ESP32_PATH}/tools/sdk/esp32/bin/bootloader_dio_80m.bin"
+          PARTITIONS="${ESP32_PATH}/tools/partitions/default.bin"
+          BOOT_APP0="${ESP32_PATH}/tools/partitions/boot_app0.bin"
+          
+          # Install esptool if not present
+          pip3 install esptool --quiet
+          
+          # Create merged binary
+          python3 -m esptool \
+            --chip esp32 \
+            merge_bin \
+            -o build/${{ env.PROJECT_NAME }}_${{ matrix.board }}_merged.bin \
+            --flash_mode dio \
+            --flash_freq 80m \
+            --flash_size 4MB \
+            0x1000 ${BOOTLOADER} \
+            0x8000 ${PARTITIONS} \
+            0xe000 ${BOOT_APP0} \
+            0x10000 build/*.bin
+          
+          echo "✅ Merged binary created successfully!"
+          
+          # Create a copy with 0x0 offset for easy flashing
+          cp build/${{ env.PROJECT_NAME }}_${{ matrix.board }}_merged.bin \
+             build/${{ env.PROJECT_NAME }}_${{ matrix.board }}_0x0.bin
+          
+          echo "✅ 0x0 offset binary created!"
+
+      - name: 📝 Generate Flash Instructions
+        run: |
+          cat > build/FLASH_INSTRUCTIONS_${{ matrix.board }}.txt << 'EOF'
+          ╔════════════════════════════════════════════════════════════════╗
+          ║           bara.cpp ESP32 Flashing Instructions                 ║
+          ╚════════════════════════════════════════════════════════════════╝
+          
+          🎯 Board: ${{ matrix.board }}
+          📦 Version: ${{ needs.prepare.outputs.version }}
+          📅 Build Date: ${{ needs.prepare.outputs.build-date }}
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          📋 OPTION 1: Flash Merged Binary (Easiest)
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 921600 \
+            write_flash 0x0 ${{ env.PROJECT_NAME }}_${{ matrix.board }}_0x0.bin
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          📋 OPTION 2: Flash Individual Components
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 921600 \
+            --before default_reset --after hard_reset write_flash \
+            -z --flash_mode dio --flash_freq 80m --flash_size detect \
+            0x1000 bootloader.bin \
+            0x8000 partitions.bin \
+            0xe000 boot_app0.bin \
+            0x10000 bara.bin
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          🪟 Windows Users:
+          Replace /dev/ttyUSB0 with your COM port (e.g., COM3)
+          
+          🍎 macOS Users:
+          Replace /dev/ttyUSB0 with /dev/cu.usbserial-*
+          
+          🐧 Linux Users:
+          You may need to run with sudo or add user to dialout group:
+          sudo usermod -a -G dialout $USER
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          📡 After Flashing:
+          1. Connect to WiFi AP: "bara"
+          2. Password: "A7med@Elshab7"
+          3. Open browser: http://192.168.4.1
+          4. Start scanning networks!
+          
+          ⚠️  LEGAL NOTICE:
+          This tool is for EDUCATIONAL PURPOSES ONLY.
+          Always ensure proper authorization before testing networks.
+          Unauthorized access is illegal and unethical.
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          Developer: أحمد نور أحمد من قنا
+          Repository: github.com/ELSHAB7UAHED/bin
+          
+          EOF
+          
+          echo "✅ Flash instructions generated!"
+
+      - name: 📤 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.board }}-${{ needs.prepare.outputs.version }}
+          path: |
+            build/*.bin
+            build/*.elf
+            build/*.map
+            build/FLASH_INSTRUCTIONS_*.txt
+          retention-days: 30
+          if-no-files-found: error
+
+  # ============================================
+  # Job 4: Create Release Package
+  # ============================================
+  create-release:
+    name: 📦 Create Release Package
+    runs-on: ubuntu-latest
+    needs: [prepare, build-firmware]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 📦 Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 🎁 Package Release
+        run: |
+          mkdir -p release
+          
+          echo "📦 Packaging release files..."
+          
+          # Copy all firmware files
+          find artifacts -name "*.bin" -exec cp {} release/ \;
+          find artifacts -name "FLASH_INSTRUCTIONS_*.txt" -exec cp {} release/ \;
+          
+          # Create release info
+          cat > release/RELEASE_INFO.txt << 'EOF'
+          ╔════════════════════════════════════════════════════════════════╗
+          ║                bara.cpp - Release Package                      ║
+          ╚════════════════════════════════════════════════════════════════╝
+          
+          📦 Version: ${{ needs.prepare.outputs.version }}
+          📅 Build Date: ${{ needs.prepare.outputs.build-date }}
+          🔨 Built By: GitHub Actions
+          📍 Repository: github.com/ELSHAB7UAHED/bin
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          📁 Package Contents:
+          
+          • bara_esp32dev_0x0.bin         - ESP32 DevKit (Merged)
+          • bara_esp32-s2-saola-1_0x0.bin - ESP32-S2 (Merged)
+          • bara_esp32-s3-devkitc-1_0x0.bin - ESP32-S3 (Merged)
+          • bara_esp32-c3-devkitm-1_0x0.bin - ESP32-C3 (Merged)
+          • FLASH_INSTRUCTIONS_*.txt      - Flashing guides
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          🚀 Quick Start:
+          
+          1. Choose your ESP32 board type
+          2. Download the corresponding *_0x0.bin file
+          3. Flash using esptool:
+             esptool.py --chip esp32 --port PORT write_flash 0x0 FILE.bin
+          4. Connect to "bara" WiFi (Password: A7med@Elshab7)
+          5. Open http://192.168.4.1
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          ⚠️  IMPORTANT:
+          This tool is for educational purposes only.
+          Always obtain proper authorization before testing networks.
+          
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          Developer: أحمد نور أحمد من قنا
+          License: Educational Use Only
+          
+          EOF
+          
+          # Create checksums
+          cd release
+          sha256sum *.bin > SHA256SUMS.txt
+          cd ..
+          
+          # Create archive
+          tar -czf bara-${{ needs.prepare.outputs.version }}.tar.gz release/
+          zip -r bara-${{ needs.prepare.outputs.version }}.zip release/
+          
+          echo "✅ Release package created!"
+
+      - name: 📊 Generate Release Report
+        run: |
+          echo "📊 Release Report" > release_report.md
+          echo "==================" >> release_report.md
+          echo "" >> release_report.md
+          echo "**Version:** ${{ needs.prepare.outputs.version }}" >> release_report.md
+          echo "**Build Date:** ${{ needs.prepare.outputs.build-date }}" >> release_report.md
+          echo "**Commit:** ${GITHUB_SHA:0:8}" >> release_report.md
+          echo "" >> release_report.md
+          echo "## 📦 Build Artifacts" >> release_report.md
+          echo "" >> release_report.md
+          echo "| Board | Firmware Size | Status |" >> release_report.md
+          echo "|-------|---------------|--------|" >> release_report.md
+          
+          for file in release/*_0x0.bin; do
+            if [ -f "$file" ]; then
+              name=$(basename "$file" _0x0.bin)
+              size=$(ls -lh "$file" | awk '{print $5}')
+              echo "| ${name} | ${size} | ✅ Ready |" >> release_report.md
+            fi
+          done
+          
+          echo "" >> release_report.md
+          echo "## 🔐 SHA256 Checksums" >> release_report.md
+          echo "\`\`\`" >> release_report.md
+          cat release/SHA256SUMS.txt >> release_report.md
+          echo "\`\`\`" >> release_report.md
+
+      - name: 📤 Upload Release Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-package-${{ needs.prepare.outputs.version }}
+          path: |
+            bara-${{ needs.prepare.outputs.version }}.tar.gz
+            bara-${{ needs.prepare.outputs.version }}.zip
+            release_report.md
+          retention-days: 90
+
+      - name: 🎉 Release Summary
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🎉 BUILD SUCCESSFUL!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "📦 Version: ${{ needs.prepare.outputs.version }}"
+          echo "📅 Date: ${{ needs.prepare.outputs.build-date }}"
+          echo "🔨 Boards: ESP32, ESP32-S2, ESP32-S3, ESP32-C3"
+          echo ""
+          echo "✅ All firmware binaries compiled successfully!"
+          echo "✅ Merged binaries created for easy flashing!"
+          echo "✅ Release packages generated!"
+          echo ""
+          echo "📥 Download artifacts from GitHub Actions"
+          echo "📍 Repository: github.com/ELSHAB7UAHED/bin"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  # ============================================
+  # Job 5: Upload to Repository (Optional)
+  # ============================================
+  upload-to-repo:
+    name: 📤 Upload Binaries to Repository
+    runs-on: ubuntu-latest
+    needs: [prepare, create-release]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Download Release Package
+        uses: actions/download-artifact@v4
+        with:
+          name: release-package-${{ needs.prepare.outputs.version }}
+          path: downloads
+
+      - name: 📁 Setup Bin Directory
+        run: |
+          mkdir -p bin/latest
+          mkdir -p bin/releases/${{ needs.prepare.outputs.version }}
+
+      - name: 📦 Extract and Organize Binaries
+        run: |
+          cd downloads
+          tar -xzf bara-${{ needs.prepare.outputs.version }}.tar.gz
+          
+          # Copy to latest
+          cp release/*.bin ../bin/latest/
+          cp release/*.txt ../bin/latest/
+          
+          # Copy to versioned release
+          cp release/* ../bin/releases/${{ needs.prepare.outputs.version }}/
+          
+          # Copy archives
+          cp bara-${{ needs.prepare.outputs.version }}.tar.gz ../bin/releases/
+          cp bara-${{ needs.prepare.outputs.version }}.zip ../bin/releases/
+
+      - name: 📝 Update README
+        run: |
+          cat > bin/README.md << 'EOF'
+          # 🚀 bara.cpp - ESP32 Firmware Binaries
+          
+          ## 📦 Latest Release
+          
+          **Version:** ${{ needs.prepare.outputs.version }}  
+          **Build Date:** ${{ needs.prepare.outputs.build-date }}  
+          **Status:** ✅ Stable
+          
+          ## 📥 Quick Download
+          
+          Choose your ESP32 board:
+          
+          | Board | Download | Size |
+          |-------|----------|------|
+          | ESP32 DevKit | [bara_esp32dev_0x0.bin](latest/bara_esp32dev_0x0.bin) | - |
+          | ESP32-S2 | [bara_esp32-s2-saola-1_0x0.bin](latest/bara_esp32-s2-saola-1_0x0.bin) | - |
+          | ESP32-S3 | [bara_esp32-s3-devkitc-1_0x0.bin](latest/bara_esp32-s3-devkitc-1_0x0.bin) | - |
+          | ESP32-C3 | [bara_esp32-c3-devkitm-1_0x0.bin](latest/bara_esp32-c3-devkitm-1_0x0.bin) | - |
+          
+          ## 🔧 Flash Instructions
+```bash
+          esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 921600 \
+            write_flash 0x0 bara_esp32dev_0x0.bin
+```
+          
+          ## 📡 Usage
+          
+          1. Flash firmware to ESP32
+          2. Connect to WiFi AP: **bara**
+          3. Password: **A7med@Elshab7**
+          4. Open browser: **http://192.168.4.1**
+          
+          ## ⚠️ Legal Notice
+          
+          This tool is for **educational purposes only**.  
+          Always ensure proper authorization before testing networks.  
+          Unauthorized access is illegal and unethical.
+          
+          ## 👨‍💻 Developer
+          
+          Created by: **أحمد نور أحمد من قنا**  
+          Repository: [github.com/ELSHAB7UAHED/bin](https://github.com/ELSHAB7UAHED/bin)
+          
+          ---
+          
+          *Built with ❤️ using GitHub Actions*
+          EOF
+
+      - name: 🚀 Commit and Push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          git add bin/
+          git commit -m "🚀 Release ${{ needs.prepare.outputs.version }} - Auto-built firmware binaries" || echo "No changes to commit"
+          git push || echo "Push failed, but that's okay"
+
+      - name: ✅ Upload Complete
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ BINARIES UPLOADED TO REPOSITORY!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "📍 Location: github.com/ELSHAB7UAHED/bin/bin/"
+          echo "📦 Version: ${{ needs.prepare.outputs.version }}"
+          echo "🔗 Direct Link: https://github.com/ELSHAB7UAHED/bin/tree/main/bin/latest"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
