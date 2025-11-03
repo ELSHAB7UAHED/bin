@@ -38,19 +38,100 @@ jobs:
         run: |
           mkdir -p src
           cp bara.cpp src/main.cpp
-          
-      - name: Fix Code Issues
+
+      - name: Fix Header Files
         run: |
-          # Remove WebServer usage (replace with ESPAsyncWebServer)
-          sed -i 's/WebServer server(WEB_PORT);/AsyncWebServer server(WEB_PORT);/g' src/main.cpp
-          sed -i 's/server.handleClient();//g' src/main.cpp
-          sed -i 's/server.on(/server.on(/g' src/main.cpp
+          # Fix ESPAsyncWebSrv.h to ESPAsyncWebServer.h
+          sed -i 's/ESPAsyncWebSrv\.h/ESPAsyncWebServer.h/g' src/main.cpp
           
-          # Comment out incompatible functions
-          sed -i 's/dnsServer.processNextRequest();/\/\/ dnsServer.processNextRequest();/g' src/main.cpp
-          sed -i 's/dnsServer.start(/\/\/ dnsServer.start(/g' src/main.cpp
+          # Remove conflicting includes
+          sed -i '/^#include <WebServer\.h>/d' src/main.cpp
+          sed -i '/^#include <DNSServer\.h>/d' src/main.cpp
+          sed -i '/^#include <WiFiManager\.h>/d' src/main.cpp
           
-          echo "✅ Code fixed for ESPAsyncWebServer compatibility"
+          # Remove duplicate FS.h
+          awk '!seen[$0]++' src/main.cpp > src/main.tmp
+          mv src/main.tmp src/main.cpp
+          
+          echo "✅ Headers fixed"
+          grep -n "include" src/main.cpp | head -20
+
+      - name: Fix Handler Functions
+        run: |
+          # Fix server.on() to work with AsyncWebServer
+          # AsyncWebServer uses different syntax
+          cat > fix_handlers.py << 'PYEOF'
+import re
+
+with open('src/main.cpp', 'r') as f:
+    content = f.read()
+
+# Fix handleRoot() to work with AsyncWebServer
+content = re.sub(
+    r'void handleRoot\(\) \{',
+    r'void handleRoot(AsyncWebServerRequest *request) {',
+    content
+)
+
+# Fix server.send() to request->send()
+content = re.sub(
+    r'server\.send\(200, "text/html", html\);',
+    r'request->send(200, "text/html", html);',
+    content
+)
+
+# Fix other server.send() calls
+content = re.sub(
+    r'server\.send\((\d+), "([^"]+)", ([^)]+)\);',
+    r'request->send(\1, "\2", \3);',
+    content
+)
+
+# Fix handleAPI
+content = re.sub(
+    r'void handleAPI\(\) \{',
+    r'void handleAPI(AsyncWebServerRequest *request) {',
+    content
+)
+
+# Fix server.hasArg to request->hasArg
+content = re.sub(r'server\.hasArg', r'request->hasArg', content)
+content = re.sub(r'server\.arg', r'request->arg', content)
+
+# Fix sendHeader
+content = re.sub(
+    r'server\.sendHeader',
+    r'request->sendHeader',
+    content
+)
+
+with open('src/main.cpp', 'w') as f:
+    f.write(content)
+
+print("✅ Handler functions fixed for AsyncWebServer")
+PYEOF
+
+          python3 fix_handlers.py
+
+      - name: Fix Server Registration
+        run: |
+          # Fix server.on() registration for AsyncWebServer
+          sed -i 's/server\.on("\/", handleRoot);/server.on("\/", HTTP_GET, handleRoot);/g' src/main.cpp
+          sed -i 's/server\.on("\/api", handleAPI);/server.on("\/api", HTTP_GET, handleAPI);/g' src/main.cpp
+          
+          # Fix server.onNotFound
+          cat >> src/main.cpp.patch << 'EOF'
+--- a/main.cpp
++++ b/main.cpp
+@@ -1,1 +1,1 @@
+-  server.onNotFound([]() {
++  server.onNotFound([](AsyncWebServerRequest *request) {
+EOF
+          
+          sed -i 's/server\.onNotFound(\[\]() {/server.onNotFound([](AsyncWebServerRequest *request) {/g' src/main.cpp
+          sed -i 's/server\.send(404,/request->send(404,/g' src/main.cpp
+          
+          echo "✅ Server registration fixed"
 
       - name: Create platformio.ini
         run: |
