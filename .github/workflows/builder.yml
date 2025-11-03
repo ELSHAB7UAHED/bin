@@ -38,6 +38,15 @@ jobs:
         run: |
           mkdir -p src
           cp bara.cpp src/main.cpp
+          
+      - name: Fix Include Headers
+        run: |
+          # Fix the incorrect header name
+          sed -i 's/#include <ESPAsyncWebSrv.h>/#include <ESPAsyncWebServer.h>/g' src/main.cpp
+          sed -i 's/#include <WebServer.h>/#include <WiFi.h>/g' src/main.cpp
+          
+          # Remove duplicate FS.h include
+          sed -i '/#include <FS.h>/!b;n;/#include <FS.h>/d' src/main.cpp
 
       - name: Create platformio.ini
         run: |
@@ -48,11 +57,12 @@ jobs:
           framework = arduino
           monitor_speed = 115200
           upload_speed = 921600
+          board_build.filesystem = spiffs
           
           lib_deps = 
               bblanchon/ArduinoJson@^6.21.3
-              https://github.com/me-no-dev/ESPAsyncWebServer.git
-              https://github.com/me-no-dev/AsyncTCP.git
+              me-no-dev/ESP Async WebServer@^1.2.3
+              me-no-dev/AsyncTCP@^1.1.1
               tzapu/WiFiManager@^2.0.16-rc.2
           
           build_flags = 
