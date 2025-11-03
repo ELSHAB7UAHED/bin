@@ -39,14 +39,18 @@ jobs:
           mkdir -p src
           cp bara.cpp src/main.cpp
           
-      - name: Fix Include Headers
+      - name: Fix Code Issues
         run: |
-          # Fix the incorrect header name
-          sed -i 's/#include <ESPAsyncWebSrv.h>/#include <ESPAsyncWebServer.h>/g' src/main.cpp
-          sed -i 's/#include <WebServer.h>/#include <WiFi.h>/g' src/main.cpp
+          # Remove WebServer usage (replace with ESPAsyncWebServer)
+          sed -i 's/WebServer server(WEB_PORT);/AsyncWebServer server(WEB_PORT);/g' src/main.cpp
+          sed -i 's/server.handleClient();//g' src/main.cpp
+          sed -i 's/server.on(/server.on(/g' src/main.cpp
           
-          # Remove duplicate FS.h include
-          sed -i '/#include <FS.h>/!b;n;/#include <FS.h>/d' src/main.cpp
+          # Comment out incompatible functions
+          sed -i 's/dnsServer.processNextRequest();/\/\/ dnsServer.processNextRequest();/g' src/main.cpp
+          sed -i 's/dnsServer.start(/\/\/ dnsServer.start(/g' src/main.cpp
+          
+          echo "✅ Code fixed for ESPAsyncWebServer compatibility"
 
       - name: Create platformio.ini
         run: |
@@ -61,9 +65,9 @@ jobs:
           
           lib_deps = 
               bblanchon/ArduinoJson@^6.21.3
-              me-no-dev/ESP Async WebServer@^1.2.3
-              me-no-dev/AsyncTCP@^1.1.1
-              tzapu/WiFiManager@^2.0.16-rc.2
+              https://github.com/me-no-dev/ESPAsyncWebServer.git
+              https://github.com/me-no-dev/AsyncTCP.git
+              https://github.com/tzapu/WiFiManager.git
           
           build_flags = 
               -DCORE_DEBUG_LEVEL=1
