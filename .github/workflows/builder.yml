@@ -52,7 +52,6 @@ jobs:
         
         lib_deps = 
             bblanchon/ArduinoJson
-            links2004/WebServer
             me-no-dev/ESPAsyncWebServer
             me-no-dev/AsyncTCP
             tzapu/WiFiManager
