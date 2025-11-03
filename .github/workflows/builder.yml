@@ -33,12 +33,11 @@ jobs:
         # Create project directory structure
         mkdir -p ${{ env.PROJECT_NAME }}/src
         mkdir -p ${{ env.PROJECT_NAME }}/lib
-        mkdir -p ${{ env.PROJECT_NAME }}/include
         
         # Copy main source file
         cp bara.cpp ${{ env.PROJECT_NAME }}/src/main.cpp
         
-        # Create platformio.ini configuration
+        # Create platformio.ini configuration with FIXED libraries
         cat > ${{ env.PROJECT_NAME }}/platformio.ini << 'EOF'
         [env:esp32dev]
         platform = espressif32
@@ -52,12 +51,12 @@ jobs:
             -D PROJECT_VERSION="${{ env.BUILD_VERSION }}"
         
         lib_deps = 
-            bblanchon/ArduinoJson @ ^6.21.3
-            me-no-dev/AsyncTCP @ ^1.1.1
-            me-no-dev/SPIFFS @ ^1.0
-            tzapu/WiFiManager @ ^2.0.16
-            bertmelis/Ticker @ ^3.1.0
-            espressif/DNSServer @ ^1.1.1
+            bblanchon/ArduinoJson
+            links2004/WebServer
+            me-no-dev/ESPAsyncWebServer
+            me-no-dev/AsyncTCP
+            tzapu/WiFiManager
+            marvinroger/async-ticker
         
         upload_port = /dev/ttyUSB0
         EOF
@@ -70,6 +69,9 @@ jobs:
     - name: Create Merged Binary
       run: |
         cd ${{ env.PROJECT_NAME }}
+        
+        # Install esptool if not available
+        python -m pip install esptool
         
         # Create merged firmware with correct offsets
         esptool.py --chip esp32 \
@@ -100,10 +102,6 @@ jobs:
         
         2. Using PlatformIO:
            pio run --target upload
-        
-        3. Using Arduino IDE:
-           - Select ESP32 Dev Module board
-           - Upload the merged_firmware.bin using 'ESP32 Sketch Data Upload' tool
         
         Default Access Point:
         SSID: bara
