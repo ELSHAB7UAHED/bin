@@ -1,550 +1,369 @@
-name: 🚀 bara.cpp ESP32 Builder
+name: ESP32 bara.cpp Build and Release
 
 on:
   push:
-    branches: [ main, master, develop ]
-    paths:
-      - '**.cpp'
-      - '**.h'
-      - '**.ino'
-      - '.github/workflows/**'
+    tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
     inputs:
-      board:
-        description: 'ESP32 Board Type'
+      version:
+        description: 'Firmware Version'
         required: true
-        default: 'esp32dev'
-        type: choice
-        options:
-          - esp32dev
-          - esp32-s2
-          - esp32-s3
-          - esp32-c3
-      partition:
-        description: 'Partition Scheme'
-        required: true
-        default: 'default'
-        type: choice
-        options:
-          - default
-          - minimal
-          - no_ota
-          - huge_app
+        default: '1.0.0'
 
 env:
-  SKETCH_NAME: bara
-  BOARD_TYPE: esp32:esp32:esp32dev
-  BUILD_DIR: build
-  ARTIFACT_NAME: bara-esp32-firmware
+  ARDUINO_CLI_VERSION: "0.35.0"
+  ESP32_CORE_VERSION: "2.0.14"
+  PROJECT_NAME: "bara-esp32-wifi-security"
+  BUILD_VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════
-  # 🔍 Pre-Build Validation & Analysis
-  # ═══════════════════════════════════════════════════════════════
-  validate:
-    name: 🔍 Code Validation
-    runs-on: ubuntu-latest
+  build-esp32:
+    name: Build ESP32 Firmware
+    runs-on: ubuntu-22.04
     
-    steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - name: 🔎 Check File Structure
-        run: |
-          echo "🔍 Validating project structure..."
-          if [ ! -f "bara (1).cpp" ] && [ ! -f "bara.cpp" ]; then
-            echo "❌ Source file not found!"
-            exit 1
-          fi
-          echo "✅ Source files validated"
-      
-      - name: 📊 Code Statistics
-        run: |
-          echo "📊 Generating code statistics..."
-          find . -name "*.cpp" -o -name "*.h" | xargs wc -l
-          echo "✅ Statistics generated"
-
-  # ═══════════════════════════════════════════════════════════════
-  # 🏗️ Build ESP32 Firmware
-  # ═══════════════════════════════════════════════════════════════
-  build:
-    name: 🏗️ Build Firmware
-    needs: validate
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        board: [esp32dev, esp32-s2, esp32-s3, esp32-c3]
-        partition: [default, huge_app]
+        board: [ esp32dev, esp32doit-devkit-v1, nodemcu-32s ]
+        include:
+          - board: esp32dev
+            description: "ESP32 Dev Module"
+            flash_size: "4MB"
+            partition_scheme: "default"
+          - board: esp32doit-devkit-v1
+            description: "DOIT ESP32 DevKit V1"
+            flash_size: "4MB"
+            partition_scheme: "default"
+          - board: nodemcu-32s
+            description: "NodeMCU-32S"
+            flash_size: "4MB"
+            partition_scheme: "default"
     
     steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-      
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      
-      - name: 📦 Cache PlatformIO
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.platformio
-            ~/.cache/pip
-          key: ${{ runner.os }}-platformio-${{ hashFiles('**/platformio.ini') }}
-          restore-keys: |
-            ${{ runner.os }}-platformio-
-      
-      - name: ⚙️ Install PlatformIO Core
-        run: |
-          echo "⚙️ Installing PlatformIO..."
-          pip install --upgrade platformio
-          pio --version
-          echo "✅ PlatformIO installed successfully"
-      
-      - name: 🔧 Prepare Build Environment
-        run: |
-          echo "🔧 Setting up build environment..."
-          
-          # Rename source file if needed
-          if [ -f "bara (1).cpp" ]; then
-            mv "bara (1).cpp" bara.cpp
-          fi
-          
-          # Create project structure
-          mkdir -p src lib include data
-          mv bara.cpp src/main.cpp 2>/dev/null || true
-          
-          echo "✅ Build environment ready"
-      
-      - name: 📝 Generate platformio.ini
-        run: |
-          cat > platformio.ini << 'EOL'
-          ; ═══════════════════════════════════════════════════════════════
-          ; bara.cpp - ESP32 WiFi Security Testing Tool
-          ; PlatformIO Configuration File
-          ; ═══════════════════════════════════════════════════════════════
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+        submodules: recursive
 
-          [platformio]
-          default_envs = ${{ matrix.board }}_${{ matrix.partition }}
-          build_dir = ${PROJECT_DIR}/build
-          
-          ; ═══════════════════════════════════════════════════════════════
-          ; Common Configuration
-          ; ═══════════════════════════════════════════════════════════════
-          [env]
-          framework = arduino
-          monitor_speed = 115200
-          upload_speed = 921600
-          monitor_filters = 
-              esp32_exception_decoder
-              time
-              log2file
-          
-          ; Build Flags
-          build_flags = 
-              -D CORE_DEBUG_LEVEL=3
-              -D ARDUINO_USB_CDC_ON_BOOT=1
-              -D CONFIG_ARDUHAL_LOG_COLORS=1
-              -Wall
-              -Wextra
-              -Os
-              -ffunction-sections
-              -fdata-sections
-              -Wl,--gc-sections
-          
-          ; Required Libraries
-          lib_deps = 
-              ESP32-WiFiManager@^1.0.0
-              ESP Async WebServer@^1.2.3
-              AsyncTCP@^1.1.1
-              ArduinoJson@^6.21.3
-              ESPAsyncTCP@^1.2.2
-              DNSServer
-              WebServer
-              WiFi
-              FS
-              SPIFFS
-              Ticker
-          
-          ; Extra Scripts
-          extra_scripts = 
-              pre:scripts/pre_build.py
-              post:scripts/post_build.py
-          
-          ; ═══════════════════════════════════════════════════════════════
-          ; ESP32 DevKit - Default Partition
-          ; ═══════════════════════════════════════════════════════════════
-          [env:esp32dev_default]
-          platform = espressif32@^6.5.0
-          board = esp32dev
-          board_build.partitions = default.csv
-          board_build.filesystem = spiffs
-          build_flags = 
-              ${env.build_flags}
-              -D BOARD_TYPE="ESP32-DEVKIT"
-          
-          ; ═══════════════════════════════════════════════════════════════
-          ; ESP32 DevKit - Huge App Partition (3MB APP)
-          ; ═══════════════════════════════════════════════════════════════
-          [env:esp32dev_huge_app]
-          platform = espressif32@^6.5.0
-          board = esp32dev
-          board_build.partitions = huge_app.csv
-          board_build.filesystem = spiffs
-          build_flags = 
-              ${env.build_flags}
-              -D BOARD_TYPE="ESP32-DEVKIT-HUGE"
-          
-          ; ═══════════════════════════════════════════════════════════════
-          ; ESP32-S2
-          ; ═══════════════════════════════════════════════════════════════
-          [env:esp32-s2_default]
-          platform = espressif32@^6.5.0
-          board = esp32-s2-saola-1
-          board_build.partitions = default.csv
-          build_flags = 
-              ${env.build_flags}
-              -D BOARD_TYPE="ESP32-S2"
-          
-          [env:esp32-s2_huge_app]
-          platform = espressif32@^6.5.0
-          board = esp32-s2-saola-1
-          board_build.partitions = huge_app.csv
-          build_flags = 
-              ${env.build_flags}
-              -D BOARD_TYPE="ESP32-S2-HUGE"
-          
-          ; ═══════════════════════════════════════════════════════════════
-          ; ESP32-S3
-          ; ═══════════════════════════════════════════════════════════════
-          [env:esp32-s3_default]
-          platform = espressif32@^6.5.0
-          board = esp32-s3-devkitc-1
-          board_build.partitions = default.csv
-          build_flags = 
-              ${env.build_flags}
-              -D BOARD_TYPE="ESP32-S3"
-          
-          [env:esp32-s3_huge_app]
-          platform = espressif32@^6.5.0
-          board = esp32-s3-devkitc-1
-          board_build.partitions = huge_app.csv
-          build_flags = 
-              ${env.build_flags}
-              -D BOARD_TYPE="ESP32-S3-HUGE"
-          
-          ; ═══════════════════════════════════════════════════════════════
-          ; ESP32-C3
-          ; ═══════════════════════════════════════════════════════════════
-          [env:esp32-c3_default]
-          platform = espressif32@^6.5.0
-          board = esp32-c3-devkitm-1
-          board_build.partitions = default.csv
-          build_flags = 
-              ${env.build_flags}
-              -D BOARD_TYPE="ESP32-C3"
-          
-          [env:esp32-c3_huge_app]
-          platform = espressif32@^6.5.0
-          board = esp32-c3-devkitm-1
-          board_build.partitions = huge_app.csv
-          build_flags = 
-              ${env.build_flags}
-              -D BOARD_TYPE="ESP32-C3-HUGE"
-          EOL
-          
-          echo "✅ platformio.ini generated"
-      
-      - name: 📋 Create Build Scripts
-        run: |
-          mkdir -p scripts
-          
-          # Pre-build script
-          cat > scripts/pre_build.py << 'PYSCRIPT'
-          Import("env")
-          import os
-          from datetime import datetime
-          
-          print("=" * 60)
-          print("🚀 bara.cpp - Pre-Build Script")
-          print("=" * 60)
-          
-          # Add build timestamp
-          build_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-          env.Append(CPPDEFINES=[
-              ("BUILD_TIMESTAMP", f'\\"{build_time}\\"'),
-              ("GITHUB_BUILD", "1")
-          ])
-          
-          print(f"⏰ Build Time: {build_time}")
-          print(f"🏗️ Environment: {env['PIOENV']}")
-          print("=" * 60)
-          PYSCRIPT
-          
-          # Post-build script
-          cat > scripts/post_build.py << 'PYSCRIPT'
-          Import("env")
-          import os
-          import shutil
-          from pathlib import Path
-          
-          def merge_bin(*args, **kwargs):
-              print("=" * 60)
-              print("🔧 bara.cpp - Post-Build Processing")
-              print("=" * 60)
-              
-              # Get build directory
-              build_dir = env.subst("$BUILD_DIR")
-              firmware_source = os.path.join(build_dir, "firmware.bin")
-              bootloader = os.path.join(env.subst("$PROJECT_DIR"), ".pio", "build", 
-                                       env['PIOENV'], "bootloader.bin")
-              partitions = os.path.join(env.subst("$PROJECT_DIR"), ".pio", "build", 
-                                       env['PIOENV'], "partitions.bin")
-              
-              # Create output directory
-              output_dir = os.path.join(env.subst("$PROJECT_DIR"), "firmware")
-              os.makedirs(output_dir, exist_ok=True)
-              
-              # Copy individual binaries
-              if os.path.exists(firmware_source):
-                  print(f"📦 Copying firmware.bin...")
-                  shutil.copy(firmware_source, os.path.join(output_dir, 
-                             f"bara_{env['PIOENV']}_app.bin"))
-              
-              if os.path.exists(bootloader):
-                  print(f"📦 Copying bootloader.bin...")
-                  shutil.copy(bootloader, os.path.join(output_dir, 
-                             f"bara_{env['PIOENV']}_bootloader.bin"))
-              
-              if os.path.exists(partitions):
-                  print(f"📦 Copying partitions.bin...")
-                  shutil.copy(partitions, os.path.join(output_dir, 
-                             f"bara_{env['PIOENV']}_partitions.bin"))
-              
-              # Create flash instructions
-              flash_cmd = f"""
-          # ═══════════════════════════════════════════════════════════════
-          # bara.cpp - Flash Instructions for {env['PIOENV']}
-          # ═══════════════════════════════════════════════════════════════
-          
-          # Using esptool.py:
-          esptool.py --chip esp32 --port COM3 --baud 921600 \\
-            --before default_reset --after hard_reset write_flash \\
-            -z --flash_mode dio --flash_freq 80m --flash_size detect \\
-            0x1000 bara_{env['PIOENV']}_bootloader.bin \\
-            0x8000 bara_{env['PIOENV']}_partitions.bin \\
-            0x10000 bara_{env['PIOENV']}_app.bin
-          
-          # Using PlatformIO:
-          pio run -e {env['PIOENV']} -t upload
-          
-          # Using Arduino IDE / ESP Flash Download Tool:
-          # - Bootloader: 0x1000
-          # - Partitions: 0x8000
-          # - Application: 0x10000
-          """
-              
-              with open(os.path.join(output_dir, f"FLASH_INSTRUCTIONS_{env['PIOENV']}.txt"), 
-                       'w') as f:
-                  f.write(flash_cmd)
-              
-              print(f"✅ Firmware files ready in: {output_dir}")
-              print("=" * 60)
-          
-          env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", merge_bin)
-          PYSCRIPT
-          
-          echo "✅ Build scripts created"
-      
-      - name: 🏗️ Build Firmware
-        run: |
-          echo "🏗️ Building firmware for ${{ matrix.board }} with ${{ matrix.partition }} partition..."
-          pio run -e ${{ matrix.board }}_${{ matrix.partition }}
-          echo "✅ Build completed successfully"
-      
-      - name: 🔧 Generate Merged Binary
-        run: |
-          echo "🔧 Creating merged binary..."
-          
-          BUILD_ENV="${{ matrix.board }}_${{ matrix.partition }}"
-          BUILD_PATH=".pio/build/${BUILD_ENV}"
-          OUTPUT_DIR="firmware"
-          
-          mkdir -p "${OUTPUT_DIR}"
-          
-          # Install esptool if not available
-          pip install esptool
-          
-          # Merge binaries
-          if [ -f "${BUILD_PATH}/bootloader.bin" ] && [ -f "${BUILD_PATH}/partitions.bin" ] && [ -f "${BUILD_PATH}/firmware.bin" ]; then
-            echo "📦 Merging binaries..."
-            
-            python -m esptool --chip esp32 merge_bin \
-              -o "${OUTPUT_DIR}/bara_${BUILD_ENV}_merged.bin" \
-              --flash_mode dio \
-              --flash_freq 80m \
-              --flash_size 4MB \
-              0x1000 "${BUILD_PATH}/bootloader.bin" \
-              0x8000 "${BUILD_PATH}/partitions.bin" \
-              0x10000 "${BUILD_PATH}/firmware.bin"
-            
-            echo "✅ Merged binary created: bara_${BUILD_ENV}_merged.bin"
-            
-            # Flash at 0x0
-            cp "${OUTPUT_DIR}/bara_${BUILD_ENV}_merged.bin" "${OUTPUT_DIR}/bara_${BUILD_ENV}_0x0.bin"
-            echo "✅ 0x0 flash file created"
-          else
-            echo "⚠️ Some binary files missing, creating partial merge..."
-          fi
-          
-          # Create checksums
-          cd "${OUTPUT_DIR}"
-          sha256sum *.bin > checksums.txt
-          cd -
-          
-          echo "✅ All binaries prepared"
-      
-      - name: 📊 Build Information
-        run: |
-          echo "📊 Build Information:"
-          echo "════════════════════════════════════════"
-          echo "Board: ${{ matrix.board }}"
-          echo "Partition: ${{ matrix.partition }}"
-          echo "Build Time: $(date)"
-          echo "════════════════════════════════════════"
-          
-          if [ -d "firmware" ]; then
-            echo "📦 Generated Files:"
-            ls -lh firmware/
-            echo "════════════════════════════════════════"
-            echo "📋 Checksums:"
-            cat firmware/checksums.txt
-          fi
-      
-      - name: 📤 Upload Firmware Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: bara-${{ matrix.board }}-${{ matrix.partition }}-firmware
-          path: |
-            firmware/*.bin
-            firmware/*.txt
-            firmware/checksums.txt
-          retention-days: 30
-      
-      - name: 📤 Upload Build Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs-${{ matrix.board }}-${{ matrix.partition }}
-          path: |
-            .pio/build/**/output.log
-            .pio/build/**/*.elf
-          retention-days: 7
+    - name: Setup Arduino CLI
+      run: |
+        curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+        echo "$(pwd)/bin" >> $GITHUB_PATH
 
-  # ═══════════════════════════════════════════════════════════════
-  # 🎉 Create Release
-  # ═══════════════════════════════════════════════════════════════
+    - name: Configure Arduino CLI
+      run: |
+        arduino-cli config init --overwrite
+        arduino-cli config set board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+        arduino-cli core update-index
+
+    - name: Install ESP32 Arduino Core
+      run: |
+        arduino-cli core install esp32:esp32@${{ env.ESP32_CORE_VERSION }}
+
+    - name: Install Required Libraries
+      run: |
+        arduino-cli lib install "ArduinoJson@6.21.3"
+        arduino-cli lib install "WebServer@1.0.0"
+        arduino-cli lib install "ESP Async WebServer@1.2.3"
+        arduino-cli lib install "AsyncTCP@1.1.1"
+        arduino-cli lib install "SPIFFS@1.0.0"
+        arduino-cli lib install "WiFiManager@2.0.16-alpha"
+        arduino-cli lib install "Ticker@3.1.0"
+        arduino-cli lib install "FS@1.0.0"
+        arduino-cli lib install "DNSServer@1.1.1"
+
+    - name: Create Project Structure
+      run: |
+        mkdir -p ${{ env.PROJECT_NAME }}/src
+        mkdir -p ${{ env.PROJECT_NAME }}/include
+        mkdir -p ${{ env.PROJECT_NAME }}/data
+        cp bara.cpp ${{ env.PROJECT_NAME }}/src/
+        
+        # Create platformio.ini configuration
+        cat > ${{ env.PROJECT_NAME }}/platformio.ini << EOF
+        [env:${{ matrix.board }}]
+        platform = espressif32
+        board = ${{ matrix.board }}
+        framework = arduino
+        monitor_speed = 115200
+        upload_speed = 921600
+        board_build.flash_mode = dio
+        board_build.partitions = ${{ matrix.partition_scheme }}
+        
+        build_flags = 
+            -D PROJECT_NAME="${{ env.PROJECT_NAME }}"
+            -D PROJECT_VERSION="${{ env.BUILD_VERSION }}"
+            -D ARDUINOJSON_USE_LONG_LONG=1
+            -D ARDUINOJSON_ENABLE_PROGMEM=1
+            -D ASYNC_TCP_SSL_ENABLED=0
+        
+        lib_deps = 
+            bblanchon/ArduinoJson@6.21.3
+            links2004/WebServer@1.0.0
+            me-no-dev/ESP Async WebServer@1.2.3
+            me-no-dev/AsyncTCP@1.1.1
+            me-no-dev/SPIFFS@1.0.0
+            tzapu/WiFiManager@2.0.16-alpha
+            bertmelis/Ticker@3.1.0
+            espressif/FS@1.0.0
+            espressif/DNSServer@1.1.1
+        
+        upload_port = /dev/ttyUSB0
+        EOF
+
+    - name: Create PlatformIO Project File
+      run: |
+        cat > ${{ env.PROJECT_NAME }}/src/main.cpp << 'EOF'
+        /*
+         * bara.cpp - ESP32 WiFi Security Testing Tool
+         * Created by: أحمد نور أحمد من قنا
+         * Platform: ESP32
+         * Interface: English
+         * Purpose: Educational WiFi Security Testing & Analysis
+         * 
+         * Legal Notice: This tool is for educational purposes only.
+         * Always ensure proper authorization before testing any networks.
+         * Unauthorized access is illegal and unethical.
+         */
+        
+        #include <Arduino.h>
+        #include <WiFi.h>
+        #include <WebServer.h>
+        #include <ArduinoJson.h>
+        #include <ESPAsyncWebSrv.h>
+        #include <SPIFFS.h>
+        #include <FS.h>
+        #include <DNSServer.h>
+        #include <WiFiManager.h>
+        #include <Ticker.h>
+        
+        // Auto-generated version info
+        const char* PROJECT_VERSION = "${{ env.BUILD_VERSION }}";
+        const char* PROJECT_BUILD_DATE = __DATE__ " " __TIME__;
+        
+        // [Rest of your existing code remains exactly the same]
+        // Configuration
+        const char* AP_NAME = "bara";
+        const char* AP_PASSWORD = "A7med@Elshab7";
+        const char* ADMIN_PASSWORD = "admin123";
+        const int WEB_PORT = 80;
+        const int SCAN_INTERVAL = 5000; // 5 seconds
+        const int MAX_NETWORKS = 50;
+        
+        // [Continue with all your existing code...]
+        EOF
+        
+        # Append the rest of your original code
+        tail -n +20 bara.cpp >> ${{ env.PROJECT_NAME }}/src/main.cpp
+
+    - name: Install PlatformIO Core
+      run: |
+        python -m pip install --upgrade platformio
+        pio --version
+
+    - name: Build with PlatformIO
+      run: |
+        cd ${{ env.PROJECT_NAME }}
+        pio run -e ${{ matrix.board }}
+
+    - name: Generate Merged Firmware Binary
+      run: |
+        cd ${{ env.PROJECT_NAME }}
+        python -c "
+        import os
+        board = '${{ matrix.board }}'
+        
+        # Find the firmware binary
+        firmware_path = f'.pio/build/{board}/firmware.bin'
+        bootloader_path = f'.pio/build/{board}/bootloader.bin'
+        partitions_path = f'.pio/build/{board}/partitions.bin'
+        
+        if os.path.exists(firmware_path):
+            # Create merged binary using esptool
+            merge_cmd = f'esptool.py --chip esp32 merge_bin -o merged_firmware_${{ env.BUILD_VERSION }}_{board}.bin 0x1000 {bootloader_path} 0x8000 {partitions_path} 0x10000 {firmware_path}'
+            os.system(merge_cmd)
+            print(f'✓ Merged firmware created for {board}')
+        else:
+            print(f'✗ Firmware not found for {board}')
+        "
+
+    - name: Collect Build Artifacts
+      run: |
+        cd ${{ env.PROJECT_NAME }}
+        mkdir -p artifacts/${{ matrix.board }}
+        
+        # Copy all relevant build files
+        cp .pio/build/${{ matrix.board }}/*.bin artifacts/${{ matrix.board }}/
+        cp merged_firmware_${{ env.BUILD_VERSION }}_${{ matrix.board }}.bin artifacts/${{ matrix.board }}/
+        
+        # Create build info file
+        cat > artifacts/${{ matrix.board }}/build_info.txt << EOF
+        Project: ${{ env.PROJECT_NAME }}
+        Version: ${{ env.BUILD_VERSION }}
+        Board: ${{ matrix.board }}
+        Description: ${{ matrix.description }}
+        Flash Size: ${{ matrix.flash_size }}
+        Partition Scheme: ${{ matrix.partition_scheme }}
+        Build Date: $(date -u)
+        GitHub Run ID: ${{ github.run_id }}
+        Commit: ${{ github.sha }}
+        EOF
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-${{ matrix.board }}-${{ env.BUILD_VERSION }}
+        path: ${{ env.PROJECT_NAME }}/artifacts/${{ matrix.board }}/
+        retention-days: 30
+
   release:
-    name: 🎉 Create Release
-    needs: build
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    name: Create Release
+    needs: build-esp32
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
     
     steps:
-      - name: 📥 Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-artifacts
-      
-      - name: 📦 Prepare Release Assets
-        run: |
-          mkdir -p release
-          find release-artifacts -name "*.bin" -exec cp {} release/ \;
-          find release-artifacts -name "checksums.txt" -exec cp {} release/ \;
-          
-          cd release
-          zip -r bara-firmware-complete.zip *.bin *.txt
-          cd -
-      
-      - name: 🚀 Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          name: bara.cpp v${{ github.ref_name }}
-          body: |
-            # 🎉 bara.cpp ESP32 WiFi Security Testing Tool
-            
-            ## 📦 Release Information
-            - **Version**: ${{ github.ref_name }}
-            - **Build Date**: ${{ github.event.head_commit.timestamp }}
-            - **Commit**: ${{ github.sha }}
-            
-            ## 📥 Installation Instructions
-            
-            ### Flash using esptool.py (Recommended - 0x0 method):
-            ```bash
-            esptool.py --chip esp32 --port COM3 write_flash 0x0 bara_*_0x0.bin
-            ```
-            
-            ### Flash using separated binaries:
-            ```bash
-            esptool.py --chip esp32 --port COM3 --baud 921600 write_flash \
-              0x1000 bootloader.bin \
-              0x8000 partitions.bin \
-              0x10000 app.bin
-            ```
-            
-            ## ⚠️ Legal Notice
-            This tool is for **educational purposes only**. Always ensure proper authorization before testing any networks.
-            
-            ## 🔧 Supported Boards
-            - ESP32 DevKit (Default & Huge App)
-            - ESP32-S2
-            - ESP32-S3
-            - ESP32-C3
-            
-            ## 📝 Changelog
-            ${{ github.event.head_commit.message }}
-          files: |
-            release/*.zip
-            release/*.bin
-            release/checksums.txt
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
 
-  # ═══════════════════════════════════════════════════════════════
-  # 📊 Build Summary
-  # ═══════════════════════════════════════════════════════════════
-  summary:
-    name: 📊 Build Summary
-    needs: build
-    if: always()
-    runs-on: ubuntu-latest
-    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          artifacts/**/*.bin
+          artifacts/**/build_info.txt
+        body: |
+          # bara.cpp - ESP32 WiFi Security Testing Tool
+          
+          ## 🚀 Firmware Release ${{ env.BUILD_VERSION }}
+          
+          ### 📋 Project Information
+          - **Developer**: أحمد نور أحمد من قنا
+          - **Platform**: ESP32
+          - **Purpose**: Educational WiFi Security Testing & Analysis
+          
+          ### ⚠️ Legal Notice
+          > This tool is for **EDUCATIONAL PURPOSES ONLY**.
+          > Always ensure proper authorization before testing any networks.
+          > Unauthorized access is illegal and unethical.
+          
+          ### 🔧 Supported Boards
+          - ESP32 Dev Module
+          - DOIT ESP32 DevKit V1
+          - NodeMCU-32S
+          
+          ### 📁 Files Included
+          - `merged_firmware_*.bin` - Complete firmware with offset 0x0
+          - `firmware.bin` - Application firmware only
+          - `bootloader.bin` - Bootloader
+          - `partitions.bin` - Partition table
+          
+          ### 🛠️ Flashing Instructions
+          ```bash
+          # Using esptool.py
+          esptool.py --chip esp32 --port /dev/ttyUSB0 write_flash 0x0 merged_firmware_${{ env.BUILD_VERSION }}_esp32dev.bin
+          
+          # Using Arduino IDE
+          # Select board and upload the merged binary
+          ```
+          
+          ### 🔒 Security Features
+          - WiFi Network Scanning & Analysis
+          - Signal Strength Monitoring
+          - Security Type Detection
+          - Educational Security Testing
+          
+          ### 📊 Build Information
+          - Build Date: ${{ fromJSON(needs.build-esp32.outputs.build_date) }}
+          - Core Version: ${{ env.ESP32_CORE_VERSION }}
+          - Arduino CLI: ${{ env.ARDUINO_CLI_VERSION }}
+          
+          ---
+          *For educational and authorized testing only.*
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-22.04
     steps:
-      - name: 📊 Generate Summary
-        run: |
-          echo "# 🚀 bara.cpp Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Build Status" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Build completed successfully" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## Artifacts Generated" >> $GITHUB_STEP_SUMMARY
-          echo "- ESP32 DevKit (Default & Huge App)" >> $GITHUB_STEP_SUMMARY
-          echo "- ESP32-S2 (Default & Huge App)" >> $GITHUB_STEP_SUMMARY
-          echo "- ESP32-S3 (Default & Huge App)" >> $GITHUB_STEP_SUMMARY
-          echo "- ESP32-C3 (Default & Huge App)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 📥 Flash Instructions" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "esptool.py --chip esp32 --port COM3 write_flash 0x0 bara_merged.bin" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🎉 **Build completed at**: $(date)" >> $GITHUB_STEP_SUMMARY
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        languages: 'cpp'
+
+    - name: Semgrep Scan
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: p/security-audit
+
+  documentation:
+    name: Generate Documentation
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Generate Documentation
+      run: |
+        mkdir -p docs
+        cat > docs/README.md << 'EOF'
+        # bara.cpp - ESP32 WiFi Security Testing Tool
+        
+        ## 📖 Overview
+        Advanced WiFi security analysis tool for ESP32 microcontrollers designed for educational purposes.
+        
+        ## ⚠️ Legal Disclaimer
+        **THIS TOOL IS FOR EDUCATIONAL AND AUTHORIZED SECURITY TESTING ONLY.**
+        
+        ## 🚀 Features
+        - Real-time WiFi network scanning
+        - Security type detection (WEP, WPA, WPA2, WPA3)
+        - Signal strength analysis
+        - Web-based management interface
+        - Educational security testing capabilities
+        
+        ## 🔧 Installation
+        ### Prerequisites
+        - ESP32 Development Board
+        - Arduino IDE or PlatformIO
+        - Required Libraries (see platformio.ini)
+        
+        ### Flashing Instructions
+        ```bash
+        # Using esptool
+        esptool.py --chip esp32 --port /dev/ttyUSB0 write_flash 0x0 merged_firmware.bin
+        ```
+        
+        ## 📊 Usage
+        1. Flash the firmware to your ESP32
+        2. Connect to "bara" access point
+        3. Open web browser to access management interface
+        4. Use tools responsibly and legally
+        
+        ## 🛡️ Security Notes
+        - Default AP Password: A7med@Elshab7
+        - Admin Password: admin123
+        - Change passwords in production environments
+        
+        ## 👨‍💻 Developer
+        أحمد نور أحمد من قنا
+        
+        ## 📄 License
+        Educational Use Only
+        EOF
+
+    - name: Upload Documentation
+      uses: actions/upload-artifact@v4
+      with:
+        name: documentation
+        path: docs/
+        retention-days: 30
