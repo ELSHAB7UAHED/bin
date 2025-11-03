@@ -175,7 +175,7 @@ jobs:
           fi
 
       - name: 📤 Upload Build Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bara-${{ matrix.board }}-${{ matrix.optimization }}-${{ needs.setup.outputs.version }}
           path: |
@@ -361,7 +361,7 @@ jobs:
           cat build_report.txt
 
       - name: 📤 Upload Merged Binary
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bara-merged-binary-${{ needs.setup.outputs.version }}
           path: |
@@ -370,7 +370,7 @@ jobs:
           retention-days: 90
 
       - name: 📤 Upload Individual Binaries
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bara-pio-all-builds-${{ needs.setup.outputs.version }}
           path: |
@@ -390,7 +390,7 @@ jobs:
     
     steps:
       - name: 📥 Download All Artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: ./artifacts
 
@@ -528,7 +528,7 @@ jobs:
           ls -lh "bara (1).cpp" >> metrics.txt
 
       - name: 📤 Upload Analysis Reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: quality-reports-${{ needs.setup.outputs.version }}
           path: |
