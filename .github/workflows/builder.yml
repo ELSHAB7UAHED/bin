@@ -1,586 +1,161 @@
-name: 🚀 ESP32 bara.cpp Professional Build Pipeline
+name: Build ESP32 bara.cpp
 
 on:
   push:
-    branches: [ main, master, develop ]
-    paths:
-      - '**.cpp'
-      - '**.h'
-      - '**.ino'
-      - '.github/workflows/builder.yml'
+    branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
-    inputs:
-      board:
-        description: 'ESP32 Board Type'
-        required: true
-        default: 'esp32dev'
-        type: choice
-        options:
-          - esp32dev
-          - esp32-s2
-          - esp32-s3
-          - esp32-c3
-      optimization:
-        description: 'Build Optimization'
-        required: true
-        default: 'release'
-        type: choice
-        options:
-          - release
-          - debug
-          - size
-
-env:
-  ARDUINO_CLI_VERSION: 'latest'
-  ESP32_CORE_VERSION: '2.0.14'
-  PROJECT_NAME: 'bara'
-  BUILD_CACHE_KEY: 'esp32-build-cache-v1'
 
 jobs:
-  # ============================================
-  # JOB 1: Environment Setup & Validation
-  # ============================================
-  setup:
-    name: 🔧 Setup Build Environment
+  build:
+    name: Build Firmware
     runs-on: ubuntu-latest
-    outputs:
-      cache-hit: ${{ steps.cache-deps.outputs.cache-hit }}
-      build-id: ${{ steps.build-info.outputs.build-id }}
-      version: ${{ steps.build-info.outputs.version }}
     
     steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: recursive
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-      - name: 🔍 Generate Build Information
-        id: build-info
-        run: |
-          BUILD_ID="build-$(date +%Y%m%d-%H%M%S)"
-          VERSION="v1.0.$(git rev-list --count HEAD)"
-          echo "build-id=$BUILD_ID" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "📦 Build ID: $BUILD_ID"
-          echo "🏷️  Version: $VERSION"
-
-      - name: 💾 Cache Dependencies
-        id: cache-deps
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.arduino15
-            ~/Arduino/libraries
-          key: ${{ runner.os }}-${{ env.BUILD_CACHE_KEY }}-${{ hashFiles('**/platformio.ini', '**/library.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ env.BUILD_CACHE_KEY }}-
-
-  # ============================================
-  # JOB 2: ESP32 Core Build with Arduino CLI
-  # ============================================
-  build-arduino:
-    name: 🏗️ Build with Arduino CLI
-    runs-on: ubuntu-latest
-    needs: setup
-    strategy:
-      matrix:
-        board: 
-          - esp32dev
-          - esp32-s2-saola-1
-          - esp32-s3-devkitc-1
-          - esp32-c3-devkitm-1
-        optimization: [release, size]
-    
-    steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-
-      - name: 🔧 Setup Arduino CLI
-        uses: arduino/setup-arduino-cli@v1
-        with:
-          version: ${{ env.ARDUINO_CLI_VERSION }}
-
-      - name: 📦 Install ESP32 Core
-        run: |
-          echo "🔽 Installing ESP32 Arduino Core ${{ env.ESP32_CORE_VERSION }}"
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32@${{ env.ESP32_CORE_VERSION }}
-          arduino-cli core list
-
-      - name: 📚 Install Required Libraries
-        run: |
-          echo "📖 Installing WiFi & Network Libraries"
-          arduino-cli lib install WiFi
-          arduino-cli lib install WebServer
-          arduino-cli lib install ESPAsyncWebServer
-          arduino-cli lib install AsyncTCP
-          
-          echo "📖 Installing JSON & Data Libraries"
-          arduino-cli lib install ArduinoJson@6.21.3
-          
-          echo "📖 Installing File System Libraries"
-          arduino-cli lib install "ESP32 SPIFFS"
-          
-          echo "📖 Installing Network Management"
-          arduino-cli lib install WiFiManager@2.0.16-rc.2
-          arduino-cli lib install DNSServer
-          
-          echo "📖 Installing Utility Libraries"
-          arduino-cli lib install Ticker
-          
-          echo "✅ All libraries installed successfully"
-          arduino-cli lib list
-
-      - name: 🔨 Compile bara.cpp
-        run: |
-          echo "🚀 Starting compilation for ${{ matrix.board }} with ${{ matrix.optimization }} optimization"
-          
-          # Set optimization flags
-          if [ "${{ matrix.optimization }}" == "size" ]; then
-            EXTRA_FLAGS="-Os -DCORE_DEBUG_LEVEL=0"
-          elif [ "${{ matrix.optimization }}" == "debug" ]; then
-            EXTRA_FLAGS="-Og -g -DCORE_DEBUG_LEVEL=5"
-          else
-            EXTRA_FLAGS="-O2 -DCORE_DEBUG_LEVEL=1"
-          fi
-          
-          # Create temporary sketch directory
-          mkdir -p /tmp/bara_sketch
-          cp "bara (1).cpp" /tmp/bara_sketch/bara.ino
-          
-          # Compile
-          arduino-cli compile \
-            --fqbn esp32:esp32:${{ matrix.board }} \
-            --build-property "build.extra_flags=$EXTRA_FLAGS" \
-            --build-property "compiler.warning_level=all" \
-            --warnings all \
-            --verbose \
-            --output-dir ./build/${{ matrix.board }}_${{ matrix.optimization }} \
-            /tmp/bara_sketch
-          
-          echo "✅ Compilation completed successfully"
-
-      - name: 📊 Build Statistics
-        run: |
-          echo "📈 Build Statistics for ${{ matrix.board }}"
-          if [ -f "./build/${{ matrix.board }}_${{ matrix.optimization }}/bara.ino.bin" ]; then
-            SIZE=$(stat -f%z "./build/${{ matrix.board }}_${{ matrix.optimization }}/bara.ino.bin" 2>/dev/null || stat -c%s "./build/${{ matrix.board }}_${{ matrix.optimization }}/bara.ino.bin")
-            echo "Binary Size: $(numfmt --to=iec-i --suffix=B $SIZE)"
-            ls -lh ./build/${{ matrix.board }}_${{ matrix.optimization }}/
-          fi
-
-      - name: 📤 Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: bara-${{ matrix.board }}-${{ matrix.optimization }}-${{ needs.setup.outputs.version }}
-          path: |
-            ./build/${{ matrix.board }}_${{ matrix.optimization }}/*.bin
-            ./build/${{ matrix.board }}_${{ matrix.optimization }}/*.elf
-            ./build/${{ matrix.board }}_${{ matrix.optimization }}/*.map
-          retention-days: 30
-
-  # ============================================
-  # JOB 3: PlatformIO Advanced Build
-  # ============================================
-  build-platformio:
-    name: 🔬 Advanced Build with PlatformIO
-    runs-on: ubuntu-latest
-    needs: setup
-    
-    steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: 🐍 Setup Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-          cache: 'pip'
 
-      - name: 📦 Install PlatformIO
+      - name: Cache PlatformIO
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: ${{ runner.os }}-pio
+
+      - name: Install PlatformIO
         run: |
-          python -m pip install --upgrade pip
           pip install --upgrade platformio
           pio --version
 
-      - name: 📝 Create platformio.ini
+      - name: Create Project Structure
         run: |
-          cat > platformio.ini << 'EOL'
-          ; PlatformIO Configuration for bara.cpp
-          ; Professional ESP32 WiFi Security Testing Tool
-          
-          [platformio]
-          default_envs = esp32dev_release
-          
-          [env]
-          platform = espressif32@6.4.0
+          mkdir -p src
+          cp bara.cpp src/main.cpp
+
+      - name: Create platformio.ini
+        run: |
+          cat > platformio.ini << 'EOF'
+          [env:esp32dev]
+          platform = espressif32
+          board = esp32dev
           framework = arduino
           monitor_speed = 115200
           upload_speed = 921600
-          board_build.partitions = default.csv
-          board_build.filesystem = spiffs
           
-          ; Common build flags
-          build_flags = 
-              -DCORE_DEBUG_LEVEL=1
-              -DBOARD_HAS_PSRAM
-              -mfix-esp32-psram-cache-issue
-              -DARDUINO_RUNNING_CORE=1
-              -DARDUINO_EVENT_RUNNING_CORE=1
-              -Wall
-              -Wextra
-          
-          ; Required libraries
           lib_deps = 
               bblanchon/ArduinoJson@^6.21.3
               https://github.com/me-no-dev/ESPAsyncWebServer.git
               https://github.com/me-no-dev/AsyncTCP.git
               tzapu/WiFiManager@^2.0.16-rc.2
           
-          [env:esp32dev_release]
-          board = esp32dev
-          build_type = release
           build_flags = 
-              ${env.build_flags}
-              -O2
-              -DRELEASE_BUILD
-          
-          [env:esp32dev_size]
-          board = esp32dev
-          build_type = release
-          build_flags = 
-              ${env.build_flags}
-              -Os
-              -DSIZE_OPTIMIZED
-          
-          [env:esp32dev_debug]
-          board = esp32dev
-          build_type = debug
-          build_flags = 
-              ${env.build_flags}
-              -Og
-              -g
-              -DDEBUG_BUILD
-              -DCORE_DEBUG_LEVEL=5
-          
-          [env:esp32s2]
-          board = esp32-s2-saola-1
-          build_flags = ${env.build_flags}
-          
-          [env:esp32s3]
-          board = esp32-s3-devkitc-1
-          build_flags = 
-              ${env.build_flags}
+              -DCORE_DEBUG_LEVEL=1
               -DBOARD_HAS_PSRAM
-          
-          [env:esp32c3]
-          board = esp32-c3-devkitm-1
-          build_flags = ${env.build_flags}
-          EOL
+          EOF
 
-      - name: 📁 Prepare Source Structure
-        run: |
-          mkdir -p src
-          cp "bara (1).cpp" src/main.cpp
-          
-          # Create necessary directories
-          mkdir -p data
-          mkdir -p include
-          mkdir -p lib
+      - name: Build Firmware
+        run: pio run
 
-      - name: 🔨 Build All Environments
-        run: |
-          echo "🚀 Building all PlatformIO environments..."
-          pio run --verbose
-          
-          echo "📊 Build Summary:"
-          pio run --target size
+      - name: Install esptool
+        run: pip install esptool
 
-      - name: 🔧 Generate Merged Binary
+      - name: Create Merged Binary
         run: |
-          echo "🔗 Creating merged firmware binary..."
+          # Define paths
+          FIRMWARE=".pio/build/esp32dev/firmware.bin"
+          BOOTLOADER="~/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/bin/bootloader_dio_40m.bin"
+          PARTITIONS=".pio/build/esp32dev/partitions.bin"
+          BOOT_APP0="~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
           
-          # Get the built binary path
-          FIRMWARE_BIN=".pio/build/esp32dev_release/firmware.bin"
-          BOOTLOADER_BIN="~/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/bin/bootloader_dio_40m.bin"
-          PARTITIONS_BIN=".pio/build/esp32dev_release/partitions.bin"
-          BOOT_APP0_BIN="~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
-          
-          # Install esptool if not present
-          pip install esptool
+          # Expand paths
+          BOOTLOADER=$(eval echo $BOOTLOADER)
+          BOOT_APP0=$(eval echo $BOOT_APP0)
           
           # Create merged binary
           python -m esptool \
             --chip esp32 \
             merge_bin \
-            -o ./bara_merged_0x0.bin \
+            -o bara_merged_0x0.bin \
             --flash_mode dio \
             --flash_freq 40m \
             --flash_size 4MB \
-            0x1000 $BOOTLOADER_BIN \
-            0x8000 $PARTITIONS_BIN \
-            0xe000 $BOOT_APP0_BIN \
-            0x10000 $FIRMWARE_BIN
+            0x1000 "$BOOTLOADER" \
+            0x8000 "$PARTITIONS" \
+            0xe000 "$BOOT_APP0" \
+            0x10000 "$FIRMWARE"
           
-          echo "✅ Merged binary created: bara_merged_0x0.bin"
+          echo "✅ Merged binary created successfully!"
           ls -lh bara_merged_0x0.bin
 
-      - name: 📊 Generate Build Report
+      - name: Create Flash Instructions
         run: |
-          cat > build_report.txt << EOL
-          ════════════════════════════════════════════════════════════════
-                     bara.cpp Build Report
-          ════════════════════════════════════════════════════════════════
+          cat > FLASH_INSTRUCTIONS.txt << 'EOF'
+          ════════════════════════════════════════════════════
+                  bara.cpp - Flash Instructions
+          ════════════════════════════════════════════════════
           
-          Build Date: $(date)
-          Version: ${{ needs.setup.outputs.version }}
-          Build ID: ${{ needs.setup.outputs.build-id }}
-          Commit: ${{ github.sha }}
+          Method 1: Using esptool (Recommended)
+          ────────────────────────────────────────────────
+          esptool.py --chip esp32 --port COM3 --baud 921600 write_flash 0x0 bara_merged_0x0.bin
           
-          ════════════════════════════════════════════════════════════════
-                          Binary Information
-          ════════════════════════════════════════════════════════════════
-          EOL
+          For Linux/Mac:
+          esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 921600 write_flash 0x0 bara_merged_0x0.bin
           
-          for env in .pio/build/*/; do
-            if [ -f "$env/firmware.bin" ]; then
-              ENV_NAME=$(basename "$env")
-              SIZE=$(stat -f%z "$env/firmware.bin" 2>/dev/null || stat -c%s "$env/firmware.bin")
-              echo "Environment: $ENV_NAME" >> build_report.txt
-              echo "  Size: $(numfmt --to=iec-i --suffix=B $SIZE)" >> build_report.txt
-              echo "  Path: $env/firmware.bin" >> build_report.txt
-              echo "" >> build_report.txt
-            fi
-          done
+          Method 2: Using ESP Flash Download Tool
+          ────────────────────────────────────────────────
+          1. Open ESP Flash Download Tool
+          2. Select ESP32
+          3. Add bara_merged_0x0.bin at address 0x0
+          4. Click START
           
-          cat build_report.txt
-
-      - name: 📤 Upload Merged Binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: bara-merged-binary-${{ needs.setup.outputs.version }}
-          path: |
-            bara_merged_0x0.bin
-            build_report.txt
-          retention-days: 90
-
-      - name: 📤 Upload Individual Binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: bara-pio-all-builds-${{ needs.setup.outputs.version }}
-          path: |
-            .pio/build/*/firmware.bin
-            .pio/build/*/firmware.elf
-            .pio/build/*/*.map
-          retention-days: 30
-
-  # ============================================
-  # JOB 4: Create GitHub Release
-  # ============================================
-  release:
-    name: 📦 Create Release Package
-    runs-on: ubuntu-latest
-    needs: [setup, build-arduino, build-platformio]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    steps:
-      - name: 📥 Download All Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ./artifacts
-
-      - name: 📦 Package Release
-        run: |
-          mkdir -p release_package
-          
-          # Copy merged binary
-          cp ./artifacts/bara-merged-binary-*/bara_merged_0x0.bin release_package/
-          
-          # Create flash instructions
-          cat > release_package/FLASH_INSTRUCTIONS.txt << 'EOL'
-          ════════════════════════════════════════════════════════════════
-                    bara.cpp - Flashing Instructions
-          ════════════════════════════════════════════════════════════════
-          
-          Method 1: Using esptool.py (Recommended)
-          ─────────────────────────────────────────────────────────────
-          esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 921600 \
-            write_flash 0x0 bara_merged_0x0.bin
-          
-          Method 2: Using Arduino IDE
-          ─────────────────────────────────────────────────────────────
-          1. Open Arduino IDE
-          2. Select ESP32 Dev Module
-          3. Tools > Partition Scheme > Default 4MB
-          4. Upload the sketch
-          
-          Method 3: Using PlatformIO
-          ─────────────────────────────────────────────────────────────
-          pio run --target upload
-          
-          Connection Information:
-          ─────────────────────────────────────────────────────────────
+          Connection Info:
+          ────────────────────────────────────────────────
           WiFi SSID: bara
           Password: A7med@Elshab7
           Web Interface: http://192.168.4.1
           
-          ════════════════════════════════════════════════════════════════
-          EOL
-          
-          # Create README
-          cat > release_package/README.md << 'EOL'
-          # bara.cpp - ESP32 WiFi Security Testing Tool
-          
-          ## 🎯 Features
-          - Advanced WiFi network scanning
-          - Real-time monitoring dashboard
-          - Security analysis tools
-          - WebSocket-based interface
-          - Educational deauth simulation
-          
-          ## 📦 Installation
-          Flash the `bara_merged_0x0.bin` file to your ESP32 at address 0x0
-          
-          ## ⚠️ Legal Notice
-          This tool is for educational purposes only. Always ensure proper 
-          authorization before testing any networks.
-          
-          ## 👨‍💻 Developer
-          Created by: أحمد نور أحمد من قنا
-          GitHub: https://github.com/ELSHAB7UAHED/bin
-          EOL
-          
-          # Create checksums
-          cd release_package
-          sha256sum * > SHA256SUMS.txt
-          cd ..
-          
-          # Create archive
-          zip -r bara_release_${{ needs.setup.outputs.version }}.zip release_package/
+          ════════════════════════════════════════════════════
+          EOF
 
-      - name: 🚀 Create GitHub Release
+      - name: Upload Merged Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: bara-firmware
+          path: |
+            bara_merged_0x0.bin
+            FLASH_INSTRUCTIONS.txt
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ needs.setup.outputs.version }}
-          name: bara.cpp ${{ needs.setup.outputs.version }}
+          tag_name: v1.0.${{ github.run_number }}
+          name: bara.cpp v1.0.${{ github.run_number }}
           body: |
-            # 🎉 bara.cpp Release ${{ needs.setup.outputs.version }}
+            ## bara.cpp - ESP32 WiFi Security Tool
             
-            ## What's Included
-            - ✅ Merged binary for direct flashing at 0x0
-            - ✅ Individual binaries for all ESP32 variants
-            - ✅ Complete documentation and flash instructions
-            - ✅ SHA256 checksums for verification
-            
-            ## Quick Start
+            ### Flash Command:
             ```bash
             esptool.py --chip esp32 --port COM3 write_flash 0x0 bara_merged_0x0.bin
             ```
             
-            ## Build Information
-            - **Build ID**: ${{ needs.setup.outputs.build-id }}
-            - **Commit**: ${{ github.sha }}
-            - **Date**: $(date)
+            ### What's Included:
+            - ✅ Merged binary ready to flash at 0x0
+            - ✅ Complete flash instructions
+            - ✅ Tested on ESP32 Dev Module
             
-            ---
-            **⚠️ Educational Use Only** - Always obtain proper authorization
+            **⚠️ Educational Use Only**
           files: |
-            bara_release_${{ needs.setup.outputs.version }}.zip
-            release_package/bara_merged_0x0.bin
-            release_package/FLASH_INSTRUCTIONS.txt
+            bara_merged_0x0.bin
+            FLASH_INSTRUCTIONS.txt
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ============================================
-  # JOB 5: Quality & Security Checks
-  # ============================================
-  quality-check:
-    name: 🔍 Code Quality & Security Analysis
-    runs-on: ubuntu-latest
-    needs: setup
-    
-    steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-
-      - name: 🔍 Run Cppcheck
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cppcheck
-          cppcheck --enable=all --force --verbose "bara (1).cpp" 2>&1 | tee cppcheck_report.txt || true
-
-      - name: 📊 Generate Code Metrics
-        run: |
-          echo "📈 Code Metrics Report" > metrics.txt
-          echo "═══════════════════════" >> metrics.txt
-          echo "" >> metrics.txt
-          echo "Lines of Code:" >> metrics.txt
-          wc -l "bara (1).cpp" >> metrics.txt
-          echo "" >> metrics.txt
-          echo "File Size:" >> metrics.txt
-          ls -lh "bara (1).cpp" >> metrics.txt
-
-      - name: 📤 Upload Analysis Reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: quality-reports-${{ needs.setup.outputs.version }}
-          path: |
-            cppcheck_report.txt
-            metrics.txt
-
-  # ============================================
-  # JOB 6: Documentation Generation
-  # ============================================
-  documentation:
-    name: 📚 Generate Documentation
-    runs-on: ubuntu-latest
-    needs: setup
-    
-    steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-
-      - name: 📝 Generate API Documentation
-        run: |
-          mkdir -p docs
-          
-          cat > docs/API_DOCUMENTATION.md << 'EOL'
-          # bara.cpp API Documentation
-          
-          ## WebSocket API
-          
-          ### Actions
-          - `start_scan` - Begin automatic WiFi scanning
-          - `stop_scan` - Stop automatic scanning
-          - `scan_now` - Perform immediate scan
-          - `get_stats` - Retrieve system statistics
-          - `analyze_network` - Analyze specific network
-          - `export_data` - Export scan results
-          
-          ## REST API Endpoints
-          
-          ### GET /api?action=scan
-          Perform WiFi scan
-          
-          ### GET /api?action=stats
-          Get system statistics
-          
-          ### GET /api?action=networks
-          List detected networks
-          
-          ### GET /api?action=export
-          Export data as CSV
-          EOL
-
-      - name: 📤 Upload Documentation
-        uses: actions/upload-artifact@v3
-        with:
-          name: documentation-${{ needs.setup.outputs.version }}
-          path: docs/
