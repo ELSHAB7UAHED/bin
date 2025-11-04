@@ -36,7 +36,7 @@ jobs:
         # Copy main source file
         cp bara.cpp ${{ env.PROJECT_NAME }}/src/main.cpp
         
-        # Create platformio.ini with WORKING library combinations
+        # Create platformio.ini with SYNCHRONOUS WebServer only (no async)
         cat > ${{ env.PROJECT_NAME }}/platformio.ini << 'EOF'
         [env:esp32dev]
         platform = espressif32
@@ -53,11 +53,29 @@ jobs:
         lib_deps = 
             bblanchon/ArduinoJson
             WebServer
-            ESPAsyncWebServer
             WiFiManager
         
         upload_port = /dev/ttyUSB0
         EOF
+
+    - name: Modify Source Code for Synchronous WebServer
+      run: |
+        cd ${{ env.PROJECT_NAME }}/src
+        
+        # Replace all AsyncWebServer includes and code with synchronous WebServer
+        sed -i 's/#include <ESPAsyncWebSrv.h>/#include <WebServer.h>/g' main.cpp
+        sed -i 's/#include <AsyncWebSocket.h>//g' main.cpp
+        sed -i 's/AsyncWebServer/WebServer/g' main.cpp
+        sed -i 's/AsyncWebSocket/WebSocket/g' main.cpp
+        sed -i 's/AsyncWebSocketClient/WebSocketClient/g' main.cpp
+        sed -i 's/AsyncEventSource/EventSource/g' main.cpp
+        
+        # Remove WebSocket related code
+        sed -i '/ws.onEvent/d' main.cpp
+        sed -i '/server.addHandler.*ws/d' main.cpp
+        sed -i '/AsyncWebSocketClient/d' main.cpp
+        
+        echo "✅ Converted to synchronous WebServer successfully"
 
     - name: Build Firmware
       run: |
@@ -107,6 +125,8 @@ jobs:
         Web Interface: http://192.168.4.1
         
         ⚠️ LEGAL NOTICE: For educational purposes only!
+        
+        Note: Using synchronous WebServer (more stable)
         EOF
         
         echo "📁 Build artifacts collected"
@@ -126,3 +146,4 @@ jobs:
         echo "📁 Artifacts: bara-esp32-firmware"
         echo "🔧 Board: ESP32 Dev Module"
         echo "📊 Firmware: merged_firmware.bin (ready to flash at 0x0)"
+        echo "ℹ️  Using synchronous WebServer (stable)"
