@@ -1,270 +1,128 @@
-name: Build ESP32 bara.cpp
+name: Build ESP32 bara.cpp Firmware
 
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
+
+env:
+  PROJECT_NAME: "bara-esp32"
+  BUILD_VERSION: "1.0.0"
 
 jobs:
   build:
-    name: Build Firmware
+    name: Build ESP32 Firmware
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
 
-      - name: Cache PlatformIO
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.platformio
-            ~/.cache/pip
-          key: ${{ runner.os }}-pio
+    - name: Install PlatformIO
+      run: |
+        python -m pip install --upgrade platformio
+        pio --version
 
-      - name: Install PlatformIO
-        run: |
-          pip install --upgrade platformio
-          pio --version
+    - name: Create PlatformIO Project
+      run: |
+        # Create project directory structure
+        mkdir -p ${{ env.PROJECT_NAME }}/src
+        
+        # Copy main source file
+        cp bara.cpp ${{ env.PROJECT_NAME }}/src/main.cpp
+        
+        # Create platformio.ini with WORKING library combinations
+        cat > ${{ env.PROJECT_NAME }}/platformio.ini << 'EOF'
+        [env:esp32dev]
+        platform = espressif32
+        board = esp32dev
+        framework = arduino
+        monitor_speed = 115200
+        upload_speed = 921600
+        
+        build_flags = 
+            -D PROJECT_NAME="${{ env.PROJECT_NAME }}"
+            -D PROJECT_VERSION="${{ env.BUILD_VERSION }}"
+            -Wno-deprecated-declarations
+        
+        lib_deps = 
+            bblanchon/ArduinoJson
+            WebServer
+            ESPAsyncWebServer
+            WiFiManager
+        
+        upload_port = /dev/ttyUSB0
+        EOF
 
-      - name: Create Project Structure
-        run: |
-          mkdir -p src
+    - name: Build Firmware
+      run: |
+        cd ${{ env.PROJECT_NAME }}
+        pio run
 
-      - name: Fix Source Code
-        run: |
-          cat > fix_code.py << 'PYEOF'
-import re
+    - name: Create Merged Binary
+      run: |
+        cd ${{ env.PROJECT_NAME }}
+        
+        # Install esptool if not available
+        python -m pip install esptool
+        
+        # Create merged firmware with correct offsets
+        esptool.py --chip esp32 \
+          merge_bin -o merged_firmware.bin \
+          0x1000 .pio/build/esp32dev/bootloader.bin \
+          0x8000 .pio/build/esp32dev/partitions.bin \
+          0x10000 .pio/build/esp32dev/firmware.bin
+        
+        echo "✅ Merged firmware created: merged_firmware.bin"
 
-# Read original file
-with open('bara.cpp', 'r', encoding='utf-8') as f:
-    content = f.read()
+    - name: Collect Build Artifacts
+      run: |
+        cd ${{ env.PROJECT_NAME }}
+        mkdir -p artifacts
+        
+        # Copy all binary files
+        cp .pio/build/esp32dev/firmware.bin artifacts/
+        cp .pio/build/esp32dev/bootloader.bin artifacts/
+        cp .pio/build/esp32dev/partitions.bin artifacts/
+        cp merged_firmware.bin artifacts/
+        
+        # Create flash instructions
+        cat > artifacts/flash_instructions.txt << 'EOF'
+        Flash Instructions for ESP32:
+        
+        1. Using esptool.py (Recommended):
+           esptool.py --chip esp32 --port /dev/ttyUSB0 write_flash 0x0 merged_firmware.bin
+        
+        2. Using PlatformIO:
+           pio run --target upload
+        
+        Default Access Point:
+        SSID: bara
+        Password: A7med@Elshab7
+        Web Interface: http://192.168.4.1
+        
+        ⚠️ LEGAL NOTICE: For educational purposes only!
+        EOF
+        
+        echo "📁 Build artifacts collected"
 
-# Fix header includes
-content = content.replace('#include <ESPAsyncWebSrv.h>', '#include <ESPAsyncWebServer.h>')
-content = content.replace('#include <WebServer.h>', '// #include <WebServer.h>')
-content = content.replace('#include <DNSServer.h>', '// #include <DNSServer.h>')
-content = content.replace('#include <WiFiManager.h>', '// #include <WiFiManager.h>')
+    - name: Upload Firmware Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: bara-esp32-firmware
+        path: ${{ env.PROJECT_NAME }}/artifacts/
+        retention-days: 30
 
-# Remove duplicate FS.h
-lines = content.split('\n')
-seen_fs = False
-new_lines = []
-for line in lines:
-    if '#include <FS.h>' in line:
-        if not seen_fs:
-            new_lines.append(line)
-            seen_fs = True
-    else:
-        new_lines.append(line)
-content = '\n'.join(new_lines)
-
-# Fix WebServer to AsyncWebServer
-content = content.replace('WebServer server(WEB_PORT);', 'AsyncWebServer server(WEB_PORT);')
-
-# Comment out DNSServer usage
-content = content.replace('DNSServer dnsServer;', '// DNSServer dnsServer;')
-content = content.replace('dnsServer.start', '// dnsServer.start')
-content = content.replace('dnsServer.processNextRequest();', '// dnsServer.processNextRequest();')
-
-# Fix handleRoot function
-content = re.sub(
-    r'void handleRoot\(\) \{',
-    'void handleRoot(AsyncWebServerRequest *request) {',
-    content
-)
-
-# Fix handleAPI function
-content = re.sub(
-    r'void handleAPI\(\) \{',
-    'void handleAPI(AsyncWebServerRequest *request) {',
-    content
-)
-
-# Fix server.send to request->send in both functions
-content = re.sub(
-    r'server\.send\(200, "text/html", html\);',
-    'request->send(200, "text/html", html);',
-    content
-)
-
-content = re.sub(
-    r'server\.send\((\d+), "([^"]+)", ([^)]+)\);',
-    r'request->send(\1, "\2", \3);',
-    content
-)
-
-# Fix server.hasArg and server.arg
-content = content.replace('server.hasArg(', 'request->hasArg(')
-content = content.replace('server.arg(', 'request->arg(')
-content = content.replace('server.sendHeader(', 'request->sendHeader(')
-
-# Fix server route registration
-content = content.replace('server.on("/", handleRoot);', 'server.on("/", HTTP_GET, handleRoot);')
-content = content.replace('server.on("/api", handleAPI);', 'server.on("/api", HTTP_GET, handleAPI);')
-
-# Fix onNotFound handler
-content = re.sub(
-    r'server\.onNotFound\(\[\]\(\) \{',
-    'server.onNotFound([](AsyncWebServerRequest *request) {',
-    content
-)
-
-# Remove server.handleClient() in loop
-content = content.replace('server.handleClient();', '// server.handleClient(); // Not needed with AsyncWebServer')
-
-# Fix server.begin() - AsyncWebServer needs addHandler first
-content = re.sub(
-    r'// Setup server routes\s+server\.on',
-    '// Setup server routes\n  server.on',
-    content
-)
-
-# Save fixed file
-with open('src/main.cpp', 'w', encoding='utf-8') as f:
-    f.write(content)
-
-print("✅ Source code fixed successfully!")
-PYEOF
-
-          python3 fix_code.py
-          
-          echo "Checking fixed file..."
-          head -50 src/main.cpp
-
-      - name: Create platformio.ini
-        run: |
-          cat > platformio.ini << 'EOF'
-          [env:esp32dev]
-          platform = espressif32
-          board = esp32dev
-          framework = arduino
-          monitor_speed = 115200
-          upload_speed = 921600
-          board_build.filesystem = spiffs
-          board_build.partitions = default.csv
-          
-          lib_deps = 
-              bblanchon/ArduinoJson@^6.21.3
-              https://github.com/me-no-dev/ESPAsyncWebServer.git
-              https://github.com/me-no-dev/AsyncTCP.git
-          
-          build_flags = 
-              -DCORE_DEBUG_LEVEL=1
-              -DBOARD_HAS_PSRAM
-              -Wno-unused-variable
-              -Wno-unused-but-set-variable
-          EOF
-
-      - name: Build Firmware
-        run: |
-          pio run -v
-        continue-on-error: false
-
-      - name: Install esptool
-        if: success()
-        run: pip install esptool
-
-      - name: Create Merged Binary
-        if: success()
-        run: |
-          # Define paths
-          FIRMWARE=".pio/build/esp32dev/firmware.bin"
-          BOOTLOADER="$HOME/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/bin/bootloader_dio_40m.bin"
-          PARTITIONS=".pio/build/esp32dev/partitions.bin"
-          BOOT_APP0="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
-          
-          # Check if files exist
-          if [ ! -f "$FIRMWARE" ]; then
-            echo "❌ Firmware not found!"
-            exit 1
-          fi
-          
-          # Create merged binary
-          python -m esptool \
-            --chip esp32 \
-            merge_bin \
-            -o bara_merged_0x0.bin \
-            --flash_mode dio \
-            --flash_freq 40m \
-            --flash_size 4MB \
-            0x1000 "$BOOTLOADER" \
-            0x8000 "$PARTITIONS" \
-            0xe000 "$BOOT_APP0" \
-            0x10000 "$FIRMWARE"
-          
-          echo "✅ Merged binary created successfully!"
-          ls -lh bara_merged_0x0.bin
-
-      - name: Create Flash Instructions
-        if: success()
-        run: |
-          cat > FLASH_INSTRUCTIONS.txt << 'EOF'
-          ════════════════════════════════════════════════════
-                  bara.cpp - Flash Instructions
-          ════════════════════════════════════════════════════
-          
-          Flash the merged binary to ESP32:
-          
-          Windows:
-          esptool.py --chip esp32 --port COM3 --baud 921600 write_flash 0x0 bara_merged_0x0.bin
-          
-          Linux/Mac:
-          esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 921600 write_flash 0x0 bara_merged_0x0.bin
-          
-          Connection Info After Flash:
-          ────────────────────────────────────────────────
-          WiFi SSID: bara
-          Password: A7med@Elshab7
-          Web Interface: http://192.168.4.1
-          
-          ⚠️ Educational Use Only
-          ════════════════════════════════════════════════════
-          EOF
-
-      - name: Upload Firmware
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bara-firmware
-          path: |
-            bara_merged_0x0.bin
-            FLASH_INSTRUCTIONS.txt
-            .pio/build/esp32dev/firmware.bin
-            .pio/build/esp32dev/firmware.elf
-
-      - name: Create Release
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: bara.cpp v1.0.${{ github.run_number }}
-          body: |
-            ## 🎯 bara.cpp - ESP32 WiFi Security Tool
-            
-            ### Quick Flash:
-            ```bash
-            esptool.py --chip esp32 --port COM3 write_flash 0x0 bara_merged_0x0.bin
-            ```
-            
-            ### What's New:
-            - ✅ Ready-to-flash merged binary
-            - ✅ Fixed all compilation errors
-            - ✅ WebSocket support
-            - ✅ Modern web interface
-            
-            **⚠️ For Educational Purposes Only**
-          files: |
-            bara_merged_0x0.bin
-            FLASH_INSTRUCTIONS.txt
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Display Build Summary
+      run: |
+        echo "🎉 Build Completed Successfully!"
+        echo "📋 Project: ${{ env.PROJECT_NAME }}"
+        echo "🏷️ Version: ${{ env.BUILD_VERSION }}"
+        echo "📁 Artifacts: bara-esp32-firmware"
+        echo "🔧 Board: ESP32 Dev Module"
+        echo "📊 Firmware: merged_firmware.bin (ready to flash at 0x0)"
