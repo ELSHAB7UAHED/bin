@@ -1,423 +1,54 @@
-name: Build BARA ESP32 Firmware
+# builder.yml
+name: Build bara firmware
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    paths:
+      - 'bara.ino'
+      - 'builder.yml'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-    
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
-    
-    - name: Install PlatformIO
-      run: |
-        python -m pip install --upgrade pip
-        pip install platformio
-    
-    - name: Create PlatformIO project structure
-      run: |
-        mkdir -p src
-        cp bara.ino src/bara.ino
-    
-    - name: Create platformio.ini
-      run: |
-        cat > platformio.ini << 'EOF'
-        [env:esp32dev]
-        platform = espressif32
-        board = esp32dev
-        framework = arduino
-        monitor_speed = 115200
-        board_build.partitions = min_spiffs.csv
-        build_flags = 
-            -DCORE_DEBUG_LEVEL=0
-            -DBOARD_HAS_PSRAM
-        lib_deps = 
-        
-        [env:esp32-wroom]
-        platform = espressif32
-        board = esp32doit-devkit-v1
-        framework = arduino
-        monitor_speed = 115200
-        build_flags = 
-            -DCORE_DEBUG_LEVEL=0
-        lib_deps = 
-        
-        [env:esp32-s2]
-        platform = espressif32
-        board = esp32-s2-saola-1
-        framework = arduino
-        monitor_speed = 115200
-        build_flags = 
-            -DCORE_DEBUG_LEVEL=0
-        lib_deps = 
-        
-        [env:esp32-s3]
-        platform = espressif32
-        board = esp32-s3-devkitc-1
-        framework = arduino
-        monitor_speed = 115200
-        build_flags = 
-            -DCORE_DEBUG_LEVEL=0
-        lib_deps = 
-        
-        [env:esp32-c3]
-        platform = espressif32
-        board = esp32-c3-devkitm-1
-        framework = arduino
-        monitor_speed = 115200
-        build_flags = 
-            -DCORE_DEBUG_LEVEL=0
-        lib_deps = 
-        EOF
-    
-    - name: Build for ESP32 Dev
-      run: |
-        pio run -e esp32dev
-        mkdir -p firmware/esp32dev
-        cp .pio/build/esp32dev/firmware.bin firmware/esp32dev/bara_esp32dev.bin
-        cp .pio/build/esp32dev/bootloader.bin firmware/esp32dev/bootloader.bin 2>/dev/null || true
-        cp .pio/build/esp32dev/partitions.bin firmware/esp32dev/partitions.bin 2>/dev/null || true
-    
-    - name: Build for ESP32-WROOM
-      run: |
-        pio run -e esp32-wroom
-        mkdir -p firmware/esp32-wroom
-        cp .pio/build/esp32-wroom/firmware.bin firmware/esp32-wroom/bara_esp32-wroom.bin
-        cp .pio/build/esp32-wroom/bootloader.bin firmware/esp32-wroom/bootloader.bin 2>/dev/null || true
-        cp .pio/build/esp32-wroom/partitions.bin firmware/esp32-wroom/partitions.bin 2>/dev/null || true
-    
-    - name: Build for ESP32-S2
-      run: |
-        pio run -e esp32-s2
-        mkdir -p firmware/esp32-s2
-        cp .pio/build/esp32-s2/firmware.bin firmware/esp32-s2/bara_esp32-s2.bin
-        cp .pio/build/esp32-s2/bootloader.bin firmware/esp32-s2/bootloader.bin 2>/dev/null || true
-        cp .pio/build/esp32-s2/partitions.bin firmware/esp32-s2/partitions.bin 2>/dev/null || true
-    
-    - name: Build for ESP32-S3
-      run: |
-        pio run -e esp32-s3
-        mkdir -p firmware/esp32-s3
-        cp .pio/build/esp32-s3/firmware.bin firmware/esp32-s3/bara_esp32-s3.bin
-        cp .pio/build/esp32-s3/bootloader.bin firmware/esp32-s3/bootloader.bin 2>/dev/null || true
-        cp .pio/build/esp32-s3/partitions.bin firmware/esp32-s3/partitions.bin 2>/dev/null || true
-    
-    - name: Build for ESP32-C3
-      run: |
-        pio run -e esp32-c3
-        mkdir -p firmware/esp32-c3
-        cp .pio/build/esp32-c3/firmware.bin firmware/esp32-c3/bara_esp32-c3.bin
-        cp .pio/build/esp32-c3/bootloader.bin firmware/esp32-c3/bootloader.bin 2>/dev/null || true
-        cp .pio/build/esp32-c3/partitions.bin firmware/esp32-c3/partitions.bin 2>/dev/null || true
-    
-    - name: Create flash instructions
-      run: |
-        cat > firmware/FLASH_INSTRUCTIONS.txt << 'EOF'
-        ================================================
-        BARA - WiFi Security Tool
-        Developer: Ahmed Nour Ahmed - Qena, Egypt
-        ================================================
-        
-        FLASHING INSTRUCTIONS:
-        
-        Method 1: Using esptool.py (Recommended)
-        -----------------------------------------
-        1. Install esptool: pip install esptool
-        
-        2. For ESP32 Dev/WROOM:
-           esptool.py --chip esp32 --port COM_PORT write_flash 0x1000 bootloader.bin 0x8000 partitions.bin 0x10000 bara_esp32dev.bin
-        
-        3. For ESP32-S2:
-           esptool.py --chip esp32s2 --port COM_PORT write_flash 0x1000 bootloader.bin 0x8000 partitions.bin 0x10000 bara_esp32-s2.bin
-        
-        4. For ESP32-S3:
-           esptool.py --chip esp32s3 --port COM_PORT write_flash 0x0 bootloader.bin 0x8000 partitions.bin 0x10000 bara_esp32-s3.bin
-        
-        5. For ESP32-C3:
-           esptool.py --chip esp32c3 --port COM_PORT write_flash 0x0 bootloader.bin 0x8000 partitions.bin 0x10000 bara_esp32-c3.bin
-        
-        Replace COM_PORT with your device port (e.g., COM3 on Windows, /dev/ttyUSB0 on Linux)
-        
-        Method 2: Using Arduino IDE
-        ----------------------------
-        1. Open Arduino IDE
-        2. Install ESP32 board support
-        3. Open bara.ino
-        4. Select your ESP32 board type
-        5. Click Upload
-        
-        Method 3: Using ESP Flash Download Tool (Windows)
-        --------------------------------------------------
-        1. Download from: https://www.espressif.com/en/support/download/other-tools
-        2. Select your chip type
-        3. Add files:
-           - bootloader.bin @ 0x1000 (or 0x0 for S3/C3)
-           - partitions.bin @ 0x8000
-           - firmware.bin @ 0x10000
-        4. Click START
-        
-        USAGE INSTRUCTIONS:
-        -------------------
-        1. After flashing, ESP32 will create WiFi AP named "bara"
-        2. Password: A7med@Elshab7
-        3. Connect to the AP
-        4. Open browser and go to: http://192.168.4.1
-        5. Use the web interface to scan and test networks
-        
-        WARNING: Use only on networks you own or have permission to test!
-        
-        ================================================
-        EOF
-    
-    - name: Create README
-      run: |
-        cat > firmware/README.md << 'EOF'
-        # BARA - WiFi Security Testing Tool
-        
-        ![Version](https://img.shields.io/badge/version-2.0-red)
-        ![ESP32](https://img.shields.io/badge/platform-ESP32-blue)
-        ![License](https://img.shields.io/badge/license-Educational-yellow)
-        
-        ## 🔴 Developer
-        **Ahmed Nour Ahmed** - Qena, Egypt
-        
-        ## ⚠️ LEGAL DISCLAIMER
-        
-        This tool is provided for **EDUCATIONAL PURPOSES ONLY**. 
-        
-        - Unauthorized access to computer networks is **ILLEGAL**
-        - Use only on networks you own or have explicit permission to test
-        - The developer is not responsible for any misuse or damage
-        - By using this tool, you agree to use it responsibly and legally
-        
-        ## 📋 Features
-        
-        - 🔍 Advanced WiFi network scanner
-        - 📊 Real-time signal strength analysis
-        - 🔐 Encryption type detection
-        - ⚔️ Deauthentication attack capability
-        - 📱 Modern responsive web interface
-        - 🎨 Cybersecurity-themed design
-        - 📈 Live attack statistics
-        - 🔄 Multi-board support (ESP32/S2/S3/C3)
-        
-        ## 🛠️ Supported Boards
-        
-        - ESP32 Dev Module
-        - ESP32-WROOM-32
-        - ESP32-S2
-        - ESP32-S3
-        - ESP32-C3
-        
-        ## 📦 Firmware Files
-        
-        Each board folder contains:
-        - `bara_[board].bin` - Main firmware
-        - `bootloader.bin` - ESP32 bootloader
-        - `partitions.bin` - Partition table
-        
-        ## 🚀 Quick Start
-        
-        1. **Flash the firmware** (see FLASH_INSTRUCTIONS.txt)
-        2. **Connect to WiFi AP**: SSID: `bara`, Password: `A7med@Elshab7`
-        3. **Open web interface**: http://192.168.4.1
-        4. **Scan networks** and start testing (authorized networks only!)
-        
-        ## 🔧 Building from Source
-        
-        ```bash
-        # Clone repository
-        git clone [your-repo-url]
-        cd bara
-        
-        # Install PlatformIO
-        pip install platformio
-        
-        # Build for your board
-        pio run -e esp32dev
-        
-        # Upload to board
-        pio run -e esp32dev --target upload
-        ```
-        
-        ## 📖 Technical Details
-        
-        - **Web Server**: ESP32 WebServer on port 80
-        - **Access Point**: 192.168.4.1
-        - **WiFi Mode**: AP+STA
-        - **Attack Method**: IEEE 802.11 Deauthentication frames
-        - **Channels**: 1-14 (depending on region)
-        
-        ## 🎯 Use Cases (Legal Only!)
-        
-        - Testing your own network security
-        - Educational demonstrations
-        - Penetration testing with authorization
-        - Security research in controlled environments
-        - WiFi network analysis
-        
-        ## ⚡ Performance
-        
-        - Scan speed: ~3 seconds for full scan
-        - Packet rate: ~400-500 packets/second
-        - Range: Depends on ESP32 antenna
-        - Stability: Optimized for long-running attacks
-        
-        ## 🐛 Troubleshooting
-        
-        **Can't connect to AP:**
-        - Check password is correct: `A7med@Elshab7`
-        - Try forgetting and reconnecting
-        - Restart ESP32
-        
-        **Web page not loading:**
-        - Verify IP address: 192.168.4.1
-        - Check you're connected to `bara` AP
-        - Try different browser
-        
-        **Attack not working:**
-        - Ensure target is in range
-        - Check channel is correct
-        - Some modern routers have protections
-        
-        **ESP32 restarting:**
-        - Use quality power supply (5V/1A minimum)
-        - Check USB cable quality
-        - Monitor serial output for errors
-        
-        ## 📜 Version History
-        
-        **v2.0** (Current)
-        - Modern cyberpunk web interface
-        - Multi-board support
-        - Improved packet injection
-        - Real-time statistics
-        - Better error handling
-        
-        ## 🤝 Contributing
-        
-        This is an educational project. Contributions for security research and educational purposes are welcome.
-        
-        ## 📧 Contact
-        
-        Developer: Ahmed Nour Ahmed
-        Location: Qena, Egypt
-        
-        ---
-        
-        **Remember**: With great power comes great responsibility. Use this tool ethically and legally! 🔐
-        EOF
-    
-    - name: Create version info
-      run: |
-        cat > firmware/VERSION.txt << 'EOF'
-        BARA WiFi Security Tool
-        Version: 2.0
-        Build Date: $(date)
-        Developer: Ahmed Nour Ahmed
-        Location: Qena, Egypt
-        
-        Supported Boards:
-        - ESP32 Dev Module
-        - ESP32-WROOM-32
-        - ESP32-S2
-        - ESP32-S3
-        - ESP32-C3
-        
-        Features:
-        - WiFi Network Scanner
-        - Deauthentication Attack
-        - Real-time Statistics
-        - Modern Web Interface
-        
-        Legal Notice:
-        FOR EDUCATIONAL USE ONLY
-        Use only on authorized networks
-        EOF
-    
-    - name: List firmware files
-      run: |
-        echo "=== Firmware Files ==="
-        ls -lR firmware/
-        echo "======================"
-    
-    - name: Upload firmware artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: bara-firmware-all-boards
-        path: firmware/
-        retention-days: 90
-    
-    - name: Upload ESP32 Dev firmware
-      uses: actions/upload-artifact@v4
-      with:
-        name: bara-esp32dev
-        path: firmware/esp32dev/
-        retention-days: 90
-    
-    - name: Upload ESP32-WROOM firmware
-      uses: actions/upload-artifact@v4
-      with:
-        name: bara-esp32-wroom
-        path: firmware/esp32-wroom/
-        retention-days: 90
-    
-    - name: Upload ESP32-S2 firmware
-      uses: actions/upload-artifact@v4
-      with:
-        name: bara-esp32-s2
-        path: firmware/esp32-s2/
-        retention-days: 90
-    
-    - name: Upload ESP32-S3 firmware
-      uses: actions/upload-artifact@v4
-      with:
-        name: bara-esp32-s3
-        path: firmware/esp32-s3/
-        retention-days: 90
-    
-    - name: Upload ESP32-C3 firmware
-      uses: actions/upload-artifact@v4
-      with:
-        name: bara-esp32-c3
-        path: firmware/esp32-c3/
-        retention-days: 90
-    
-    - name: Create Release (on tags)
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: firmware/**/*
-        body: |
-          # BARA v2.0 - WiFi Security Testing Tool
-          
-          Developer: Ahmed Nour Ahmed - Qena, Egypt
-          
-          ## ⚠️ Legal Notice
-          FOR EDUCATIONAL PURPOSES ONLY. Use only on authorized networks.
-          
-          ## 📦 Downloads
-          Download the firmware for your ESP32 board type.
-          
-          ## 📖 Instructions
-          See FLASH_INSTRUCTIONS.txt in the firmware package.
-          
-          ## ✨ Features
-          - WiFi network scanner
-          - Deauthentication attack capability
-          - Real-time statistics
-          - Modern web interface
-          - Multi-board support
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install PlatformIO
+        run: |
+          pip install platformio
+
+      - name: Create PlatformIO project
+        run: |
+          mkdir bara-project
+          cp bara.ino bara-project/
+          cd bara-project
+          cat > platformio.ini <<EOF
+          [env:esp32dev]
+          platform = espressif32
+          board = esp32dev
+          framework = arduino
+          lib_deps =
+            WiFi
+            WebServer
+          EOF
+
+      - name: Build firmware
+        run: |
+          cd bara-project
+          pio run
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bara-firmware
+          path: |
+            bara-project/.pio/build/esp32dev/firmware.bin
+            bara-project/.pio/build/esp32dev/partitions.bin
+            bara-project/.pio/build/esp32dev/bootloader.bin
