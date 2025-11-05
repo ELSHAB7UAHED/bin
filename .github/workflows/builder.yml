@@ -1,11 +1,10 @@
-# builder.yml
-name: Build bara firmware
+# builder.yml for GitHub Actions to build bara.ino for ESP32
+name: Build bara.ino
 
 on:
   push:
     paths:
       - 'bara.ino'
-      - 'builder.yml'
   workflow_dispatch:
 
 jobs:
@@ -15,40 +14,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
 
-      - name: Install PlatformIO
+      - name: Install ESP32 Board
         run: |
-          pip install platformio
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
 
-      - name: Create PlatformIO project
+      - name: Compile bara.ino
         run: |
-          mkdir bara-project
-          cp bara.ino bara-project/
-          cd bara-project
-          cat > platformio.ini <<EOF
-          [env:esp32dev]
-          platform = espressif32
-          board = esp32dev
-          framework = arduino
-          lib_deps =
-            WiFi
-            WebServer
-          EOF
+          arduino-cli compile --fqbn esp32:esp32:esp32 --output-dir ./build bara.ino
 
-      - name: Build firmware
-        run: |
-          cd bara-project
-          pio run
-
-      - name: Upload artifacts
+      - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
           name: bara-firmware
-          path: |
-            bara-project/.pio/build/esp32dev/firmware.bin
-            bara-project/.pio/build/esp32dev/partitions.bin
-            bara-project/.pio/build/esp32dev/bootloader.bin
+          path: ./build/
